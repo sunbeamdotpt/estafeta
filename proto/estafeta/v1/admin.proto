@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package estafeta.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "estafeta/v1/common.proto";
+
+service AdminService {
+  // Register a new producer service
+  rpc RegisterService(RegisterServiceRequest) returns (Service);
+
+  // Update an existing service
+  rpc UpdateService(UpdateServiceRequest) returns (Service);
+
+  // List registered services
+  rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
+
+  // Disable a service (stops accepting notifications)
+  rpc DisableService(DisableServiceRequest) returns (google.protobuf.Empty);
+
+  // Enable a previously disabled service
+  rpc EnableService(EnableServiceRequest) returns (google.protobuf.Empty);
+
+  // Set global platform policy
+  rpc SetGlobalPolicy(SetGlobalPolicyRequest) returns (GlobalPolicy);
+
+  // Get current global policy
+  rpc GetGlobalPolicy(GetGlobalPolicyRequest) returns (GlobalPolicy);
+
+  // Replay a notification (re-trigger delivery)
+  rpc ReplayNotification(ReplayNotificationRequest) returns (google.protobuf.Empty);
+}
+
+message RegisterServiceRequest {
+  string slug = 1;
+  string display_name = 2;
+  string description = 3;
+}
+
+message Service {
+  string id = 1;
+  string slug = 2;
+  string display_name = 3;
+  string description = 4;
+  bool enabled = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message UpdateServiceRequest {
+  string slug = 1;
+  string display_name = 2;
+  string description = 3;
+}
+
+message ListServicesRequest {
+  Pagination pagination = 1;
+}
+
+message ListServicesResponse {
+  repeated Service services = 1;
+  PaginatedResponse pagination = 2;
+}
+
+message DisableServiceRequest {
+  string slug = 1;
+}
+
+message EnableServiceRequest {
+  string slug = 1;
+}
+
+message SetGlobalPolicyRequest {
+  int32 max_notifications_per_user_per_hour = 1;
+  int32 max_ttl_seconds = 2;
+  int32 max_escalations = 3;
+  repeated DeliveryChannel default_channels = 4;
+  int32 rate_limit_per_service_per_second = 5;
+}
+
+message GlobalPolicy {
+  int32 max_notifications_per_user_per_hour = 1;
+  int32 max_ttl_seconds = 2;
+  int32 max_escalations = 3;
+  repeated DeliveryChannel default_channels = 4;
+  int32 rate_limit_per_service_per_second = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+message GetGlobalPolicyRequest {}
+
+message ReplayNotificationRequest {
+  string notification_id = 1;
+  repeated DeliveryChannel channels = 2;
+}

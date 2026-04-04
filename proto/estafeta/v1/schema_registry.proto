@@ -1,0 +1,136 @@
+syntax = "proto3";
+
+package estafeta.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "estafeta/v1/common.proto";
+
+service SchemaRegistryService {
+  // Register a new notification type with its JSON schema
+  rpc RegisterType(RegisterTypeRequest) returns (NotificationType);
+
+  // Update an existing notification type
+  rpc UpdateType(UpdateTypeRequest) returns (NotificationType);
+
+  // Get a notification type by service slug and type key
+  rpc GetType(GetTypeRequest) returns (NotificationType);
+
+  // List all notification types, optionally filtered by service
+  rpc ListTypes(ListTypesRequest) returns (ListTypesResponse);
+
+  // Register a notification level for a service
+  rpc RegisterLevel(RegisterLevelRequest) returns (NotificationLevel);
+
+  // Update a notification level
+  rpc UpdateLevel(UpdateLevelRequest) returns (NotificationLevel);
+
+  // List levels for a service
+  rpc ListLevels(ListLevelsRequest) returns (ListLevelsResponse);
+
+  // Validate a payload against a type's schema without sending
+  rpc ValidatePayload(ValidatePayloadRequest) returns (ValidatePayloadResponse);
+}
+
+message RegisterTypeRequest {
+  string service_slug = 1;
+  string type_key = 2;
+  string display_name = 3;
+  string description = 4;
+  google.protobuf.Struct json_schema = 5;
+  repeated DeliveryChannel default_channels = 6;
+  int32 default_ttl_seconds = 7;
+  int32 escalation_interval_seconds = 8;
+  int32 max_escalations = 9;
+}
+
+message UpdateTypeRequest {
+  string service_slug = 1;
+  string type_key = 2;
+  string display_name = 3;
+  string description = 4;
+  google.protobuf.Struct json_schema = 5;
+  repeated DeliveryChannel default_channels = 6;
+  int32 default_ttl_seconds = 7;
+  int32 escalation_interval_seconds = 8;
+  int32 max_escalations = 9;
+  bool enabled = 10;
+}
+
+message GetTypeRequest {
+  string service_slug = 1;
+  string type_key = 2;
+}
+
+message ListTypesRequest {
+  string service_slug = 1;
+  Pagination pagination = 2;
+}
+
+message ListTypesResponse {
+  repeated NotificationType types = 1;
+  PaginatedResponse pagination = 2;
+}
+
+message NotificationType {
+  string id = 1;
+  string service_slug = 2;
+  string type_key = 3;
+  string display_name = 4;
+  string description = 5;
+  google.protobuf.Struct json_schema = 6;
+  repeated DeliveryChannel default_channels = 7;
+  int32 default_ttl_seconds = 8;
+  int32 escalation_interval_seconds = 9;
+  int32 max_escalations = 10;
+  bool enabled = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+message RegisterLevelRequest {
+  string service_slug = 1;
+  string key = 2;
+  string display_name = 3;
+  int32 severity = 4;
+  string color = 5;
+  string icon = 6;
+}
+
+message UpdateLevelRequest {
+  string service_slug = 1;
+  string key = 2;
+  string display_name = 3;
+  int32 severity = 4;
+  string color = 5;
+  string icon = 6;
+}
+
+message NotificationLevel {
+  string id = 1;
+  string service_slug = 2;
+  string key = 3;
+  string display_name = 4;
+  int32 severity = 5;
+  string color = 6;
+  string icon = 7;
+}
+
+message ListLevelsRequest {
+  string service_slug = 1;
+}
+
+message ListLevelsResponse {
+  repeated NotificationLevel levels = 1;
+}
+
+message ValidatePayloadRequest {
+  string service_slug = 1;
+  string notification_type = 2;
+  google.protobuf.Struct payload = 3;
+}
+
+message ValidatePayloadResponse {
+  bool valid = 1;
+  repeated string errors = 2;
+}

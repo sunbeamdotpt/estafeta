@@ -1,0 +1,68 @@
+[package]
+name = "estafeta-server"
+version = "0.1.0"
+edition.workspace = true
+
+[lib]
+name = "estafeta_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "estafeta"
+path = "src/main.rs"
+
+[dependencies]
+estafeta-proto = { path = "../estafeta-proto" }
+
+# gRPC
+tonic.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+
+# Async
+tokio.workspace = true
+async-trait.workspace = true
+
+# NATS
+async-nats.workspace = true
+
+# Database
+sqlx.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# JSON Schema
+jsonschema.workspace = true
+
+# Auth
+jsonwebtoken.workspace = true
+reqwest.workspace = true
+
+# Cache
+moka.workspace = true
+
+# Config
+figment.workspace = true
+
+# Email
+lettre.workspace = true
+
+# Observability
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Utilities
+uuid.workspace = true
+chrono.workspace = true
+futures = "0.3"
+tokio-stream = "0.1"
+
+[dev-dependencies]
+wiremock = "0.6"
+mockall = "0.13"

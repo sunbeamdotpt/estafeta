@@ -1,0 +1,155 @@
+syntax = "proto3";
+
+package estafeta.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "estafeta/v1/common.proto";
+
+service UserConfigService {
+  // Get global user preferences
+  rpc GetPreferences(GetPreferencesRequest) returns (UserPreferences);
+
+  // Update global user preferences
+  rpc UpdatePreferences(UpdatePreferencesRequest) returns (UserPreferences);
+
+  // Set per-service preference override
+  rpc SetServicePreference(SetServicePreferenceRequest) returns (ServicePreference);
+
+  // Delete a per-service preference override
+  rpc DeleteServicePreference(DeleteServicePreferenceRequest) returns (google.protobuf.Empty);
+
+  // Set per-type preference override
+  rpc SetTypePreference(SetTypePreferenceRequest) returns (TypePreference);
+
+  // Delete a per-type preference override
+  rpc DeleteTypePreference(DeleteTypePreferenceRequest) returns (google.protobuf.Empty);
+
+  // List all mute rules for the user
+  rpc ListMuteRules(ListMuteRulesRequest) returns (ListMuteRulesResponse);
+
+  // Create a mute rule
+  rpc CreateMuteRule(CreateMuteRuleRequest) returns (MuteRule);
+
+  // Delete a mute rule
+  rpc DeleteMuteRule(DeleteMuteRuleRequest) returns (google.protobuf.Empty);
+
+  // Register a device for push notifications
+  rpc RegisterDevice(RegisterDeviceRequest) returns (Device);
+
+  // Unregister a device
+  rpc UnregisterDevice(UnregisterDeviceRequest) returns (google.protobuf.Empty);
+
+  // Update delivery channel contact info
+  rpc UpdateChannelConfig(UpdateChannelConfigRequest) returns (ChannelConfig);
+
+  // Get delivery channel contact info
+  rpc GetChannelConfig(GetChannelConfigRequest) returns (ChannelConfig);
+}
+
+message GetPreferencesRequest {}
+
+message UserPreferences {
+  bool global_enabled = 1;
+  repeated ServicePreference service_preferences = 2;
+  repeated TypePreference type_preferences = 3;
+}
+
+message UpdatePreferencesRequest {
+  bool global_enabled = 1;
+}
+
+message SetServicePreferenceRequest {
+  string service_slug = 1;
+  bool enabled = 2;
+  int32 min_severity = 3;
+  repeated DeliveryChannel channels = 4;
+}
+
+message DeleteServicePreferenceRequest {
+  string service_slug = 1;
+}
+
+message ServicePreference {
+  string service_slug = 1;
+  bool enabled = 2;
+  int32 min_severity = 3;
+  repeated DeliveryChannel channels = 4;
+}
+
+message SetTypePreferenceRequest {
+  string service_slug = 1;
+  string type_key = 2;
+  bool enabled = 3;
+  repeated DeliveryChannel channels = 4;
+}
+
+message DeleteTypePreferenceRequest {
+  string service_slug = 1;
+  string type_key = 2;
+}
+
+message TypePreference {
+  string service_slug = 1;
+  string type_key = 2;
+  bool enabled = 3;
+  repeated DeliveryChannel channels = 4;
+}
+
+message ListMuteRulesRequest {}
+
+message ListMuteRulesResponse {
+  repeated MuteRule rules = 1;
+}
+
+message CreateMuteRuleRequest {
+  string service_slug = 1;
+  string notification_type = 2;
+  google.protobuf.Timestamp muted_until = 3;
+}
+
+message MuteRule {
+  string id = 1;
+  string service_slug = 2;
+  string notification_type = 3;
+  google.protobuf.Timestamp muted_until = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message DeleteMuteRuleRequest {
+  string rule_id = 1;
+}
+
+message RegisterDeviceRequest {
+  string device_id = 1;
+  string platform = 2;
+  string push_token = 3;
+}
+
+message Device {
+  string id = 1;
+  string device_id = 2;
+  string platform = 3;
+  string push_token = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message UnregisterDeviceRequest {
+  string device_id = 1;
+}
+
+message UpdateChannelConfigRequest {
+  string email_address = 1;
+  string phone_number = 2;
+  string webhook_url = 3;
+  string webhook_secret = 4;
+}
+
+message GetChannelConfigRequest {}
+
+message ChannelConfig {
+  string email_address = 1;
+  string phone_number = 2;
+  string webhook_url = 3;
+  bool webhook_secret_set = 4;
+}

@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package estafeta.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Pagination request parameters
+message Pagination {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+// Pagination response metadata
+message PaginatedResponse {
+  string next_page_token = 1;
+  int64 total_count = 2;
+}
+
+// Notification lifecycle state
+enum NotificationState {
+  NOTIFICATION_STATE_UNSPECIFIED = 0;
+  NOTIFICATION_STATE_UNREAD = 1;
+  NOTIFICATION_STATE_READ = 2;
+  NOTIFICATION_STATE_SNOOZED = 3;
+  NOTIFICATION_STATE_DISMISSED = 4;
+  NOTIFICATION_STATE_EXPIRED = 5;
+}
+
+// Delivery channel types
+enum DeliveryChannel {
+  DELIVERY_CHANNEL_UNSPECIFIED = 0;
+  DELIVERY_CHANNEL_EMAIL = 1;
+  DELIVERY_CHANNEL_PUSH = 2;
+  DELIVERY_CHANNEL_SMS = 3;
+  DELIVERY_CHANNEL_WEBHOOK = 4;
+}
+
+// Delivery attempt status
+enum DeliveryStatus {
+  DELIVERY_STATUS_UNSPECIFIED = 0;
+  DELIVERY_STATUS_PENDING = 1;
+  DELIVERY_STATUS_SENT = 2;
+  DELIVERY_STATUS_DELIVERED = 3;
+  DELIVERY_STATUS_FAILED = 4;
+  DELIVERY_STATUS_SKIPPED = 5;
+}
