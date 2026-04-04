@@ -10,4 +10,4 @@ CREATE TABLE mute_rules (
 
 CREATE INDEX idx_mute_rules_user ON mute_rules (user_id);
 CREATE INDEX idx_mute_rules_active ON mute_rules (user_id, muted_until)
-    WHERE muted_until IS NULL OR muted_until > now();
+    WHERE muted_until IS NULL;
