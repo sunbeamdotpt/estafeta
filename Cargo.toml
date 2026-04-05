@@ -9,7 +9,8 @@ members = [
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/sunbeam/estafeta"
+repository = "https://src.sunbeam.pt/studio/estafeta"
+publish = ["sunbeam"]
 
 [workspace.dependencies]
 # gRPC / Protobuf
