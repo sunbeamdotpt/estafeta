@@ -12,16 +12,17 @@ service StreamingService {
 }
 
 message SubscribeRequest {
+  // Filter to specific services (empty = all)
   repeated string service_slugs = 1;
-  repeated NotificationState states = 2;
-  bool include_state_changes = 3;
+  // Include state change events (read, dismissed, etc.)
+  bool include_state_changes = 2;
 }
 
 message NotificationEvent {
   oneof event {
     NewNotification new_notification = 1;
     StateChange state_change = 2;
-    UnreadCountUpdate unread_count_update = 3;
+    UnseenCountUpdate unseen_count_update = 3;
   }
 }
 
@@ -35,6 +36,8 @@ message NewNotification {
   map<string, string> metadata = 7;
   google.protobuf.Timestamp created_at = 8;
   google.protobuf.Timestamp expires_at = 9;
+  string action_url = 10;
+  string icon = 11;
 }
 
 message StateChange {
@@ -44,7 +47,7 @@ message StateChange {
   google.protobuf.Timestamp changed_at = 4;
 }
 
-message UnreadCountUpdate {
+message UnseenCountUpdate {
   int64 total_count = 1;
   map<string, int64> count_by_service = 2;
 }

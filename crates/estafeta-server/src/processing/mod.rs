@@ -1,8 +1,7 @@
 //! Notification processing pipeline.
 //!
 //! The [`Processor`] consumes ingestion messages from JetStream, validates payloads,
-//! resolves user delivery preferences, persists notifications, and fans out delivery
-//! dispatch messages.
+//! resolves user preferences, persists notifications, and publishes real-time events.
 
 pub mod preference_resolver;
 pub mod processor;

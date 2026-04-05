@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_nats::jetstream;
 use tracing::warn;
 
-use super::messages::{DeliveryDispatchMessage, IngestMessage, RealtimeEvent};
+use super::messages::{IngestMessage, RealtimeEvent};
 
 /// Publishes messages to both JetStream and NATS Core subjects.
 #[derive(Clone)]
@@ -20,21 +20,6 @@ impl NatsPublisher {
     /// Publish an ingestion message to JetStream.
     pub async fn publish_ingest(&self, service_slug: &str, msg: &IngestMessage) -> Result<()> {
         let subject = format!("notif.ingest.{service_slug}");
-        let payload = serde_json::to_vec(msg)?;
-        self.js
-            .publish(subject, payload.into())
-            .await?
-            .await?;
-        Ok(())
-    }
-
-    /// Publish a delivery dispatch message to JetStream.
-    pub async fn publish_delivery(
-        &self,
-        channel: &str,
-        msg: &DeliveryDispatchMessage,
-    ) -> Result<()> {
-        let subject = format!("delivery.dispatch.{channel}");
         let payload = serde_json::to_vec(msg)?;
         self.js
             .publish(subject, payload.into())

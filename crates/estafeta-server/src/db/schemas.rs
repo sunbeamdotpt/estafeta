@@ -10,10 +10,11 @@ pub struct NotificationTypeRow {
     pub display_name: String,
     pub description: Option<String>,
     pub json_schema: serde_json::Value,
-    pub default_channels: Vec<String>,
     pub default_ttl_seconds: Option<i32>,
     pub escalation_interval_seconds: Option<i32>,
     pub max_escalations: i32,
+    pub escalation_action: String,
+    pub default_icon: Option<String>,
     pub enabled: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -38,17 +39,19 @@ pub async fn insert_notification_type(
     display_name: &str,
     description: Option<&str>,
     json_schema: &serde_json::Value,
-    default_channels: &[String],
     default_ttl_seconds: Option<i32>,
     escalation_interval_seconds: Option<i32>,
     max_escalations: i32,
+    escalation_action: &str,
+    default_icon: Option<&str>,
 ) -> Result<NotificationTypeRow, sqlx::Error> {
     sqlx::query_as::<_, NotificationTypeRow>(
         r#"
         INSERT INTO notification_types
             (service_id, type_key, display_name, description, json_schema,
-             default_channels, default_ttl_seconds, escalation_interval_seconds, max_escalations)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             default_ttl_seconds, escalation_interval_seconds, max_escalations,
+             escalation_action, default_icon)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING *
         "#,
     )
@@ -57,10 +60,11 @@ pub async fn insert_notification_type(
     .bind(display_name)
     .bind(description)
     .bind(json_schema)
-    .bind(default_channels)
     .bind(default_ttl_seconds)
     .bind(escalation_interval_seconds)
     .bind(max_escalations)
+    .bind(escalation_action)
+    .bind(default_icon)
     .fetch_one(pool)
     .await
 }
@@ -72,19 +76,20 @@ pub async fn update_notification_type(
     display_name: &str,
     description: Option<&str>,
     json_schema: &serde_json::Value,
-    default_channels: &[String],
     default_ttl_seconds: Option<i32>,
     escalation_interval_seconds: Option<i32>,
     max_escalations: i32,
+    escalation_action: &str,
+    default_icon: Option<&str>,
     enabled: bool,
 ) -> Result<NotificationTypeRow, sqlx::Error> {
     sqlx::query_as::<_, NotificationTypeRow>(
         r#"
         UPDATE notification_types
         SET display_name = $3, description = $4, json_schema = $5,
-            default_channels = $6, default_ttl_seconds = $7,
-            escalation_interval_seconds = $8, max_escalations = $9,
-            enabled = $10, updated_at = now()
+            default_ttl_seconds = $6, escalation_interval_seconds = $7,
+            max_escalations = $8, escalation_action = $9, default_icon = $10,
+            enabled = $11, updated_at = now()
         WHERE service_id = $1 AND type_key = $2
         RETURNING *
         "#,
@@ -94,10 +99,11 @@ pub async fn update_notification_type(
     .bind(display_name)
     .bind(description)
     .bind(json_schema)
-    .bind(default_channels)
     .bind(default_ttl_seconds)
     .bind(escalation_interval_seconds)
     .bind(max_escalations)
+    .bind(escalation_action)
+    .bind(default_icon)
     .bind(enabled)
     .fetch_one(pool)
     .await
@@ -113,6 +119,18 @@ pub async fn get_notification_type(
     )
     .bind(service_id)
     .bind(type_key)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn get_notification_type_by_id(
+    pool: &PgPool,
+    id: Uuid,
+) -> Result<Option<NotificationTypeRow>, sqlx::Error> {
+    sqlx::query_as::<_, NotificationTypeRow>(
+        "SELECT * FROM notification_types WHERE id = $1",
+    )
+    .bind(id)
     .fetch_optional(pool)
     .await
 }

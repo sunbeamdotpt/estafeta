@@ -5,7 +5,6 @@ package estafeta.v1;
 import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
-import "google/protobuf/duration.proto";
 import "estafeta/v1/common.proto";
 
 service NotificationService {
@@ -21,6 +20,9 @@ service NotificationService {
   // List notifications for a user with filters
   rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse);
 
+  // Mark notifications as seen (called when the dropdown opens)
+  rpc MarkSeen(MarkSeenRequest) returns (MarkSeenResponse);
+
   // Mark one or more notifications as read
   rpc MarkRead(MarkReadRequest) returns (google.protobuf.Empty);
 
@@ -32,6 +34,12 @@ service NotificationService {
 
   // Dismiss one or more notifications
   rpc Dismiss(DismissRequest) returns (google.protobuf.Empty);
+
+  // Dismiss all notifications in a service group
+  rpc DismissAllInGroup(DismissAllInGroupRequest) returns (DismissAllInGroupResponse);
+
+  // Get the unseen count (drives the bell badge)
+  rpc GetUnseenCount(GetUnseenCountRequest) returns (UnseenCountResponse);
 
   // Get unread count, optionally filtered
   rpc GetUnreadCount(GetUnreadCountRequest) returns (UnreadCountResponse);
@@ -47,6 +55,10 @@ message SendNotificationRequest {
   string group_key = 7;
   int32 ttl_seconds = 8;
   map<string, string> metadata = 9;
+  // URL to navigate to when the notification is clicked
+  string action_url = 10;
+  // Material Symbol icon name for display
+  string icon = 11;
 }
 
 message SendNotificationResponse {
@@ -76,11 +88,14 @@ message Notification {
   string group_key = 7;
   map<string, string> metadata = 8;
   google.protobuf.Timestamp created_at = 9;
-  google.protobuf.Timestamp read_at = 10;
-  google.protobuf.Timestamp snoozed_until = 11;
-  google.protobuf.Timestamp expires_at = 12;
-  int32 escalation_count = 13;
-  string recipient_user_id = 14;
+  google.protobuf.Timestamp seen_at = 10;
+  google.protobuf.Timestamp read_at = 11;
+  google.protobuf.Timestamp snoozed_until = 12;
+  google.protobuf.Timestamp expires_at = 13;
+  int32 escalation_count = 14;
+  string recipient_user_id = 15;
+  string action_url = 16;
+  string icon = 17;
 }
 
 message ListNotificationsRequest {
@@ -94,6 +109,15 @@ message ListNotificationsRequest {
 message ListNotificationsResponse {
   repeated Notification notifications = 1;
   PaginatedResponse pagination = 2;
+}
+
+message MarkSeenRequest {
+  // If empty, marks all unseen as seen
+  repeated string notification_ids = 1;
+}
+
+message MarkSeenResponse {
+  int64 marked_count = 1;
 }
 
 message MarkReadRequest {
@@ -111,6 +135,23 @@ message SnoozeRequest {
 
 message DismissRequest {
   repeated string notification_ids = 1;
+}
+
+message DismissAllInGroupRequest {
+  string service_slug = 1;
+}
+
+message DismissAllInGroupResponse {
+  int64 dismissed_count = 1;
+}
+
+message GetUnseenCountRequest {
+  repeated string service_slugs = 1;
+}
+
+message UnseenCountResponse {
+  int64 total_count = 1;
+  map<string, int64> count_by_service = 2;
 }
 
 message GetUnreadCountRequest {

@@ -87,12 +87,11 @@ async fn setup_service(env: &mut common::TestEnv) -> (String, String) {
             display_name: "Alert".into(),
             description: "Test alert".into(),
             json_schema: Some(schema),
-            default_channels: vec![
-                DeliveryChannel::Push as i32,
-            ],
             default_ttl_seconds: 3600,
             escalation_interval_seconds: 0,
             max_escalations: 0,
+            escalation_action: EscalationAction::Resurface as i32,
+            default_icon: "notifications".into(),
         })
         .await
         .unwrap()
@@ -186,7 +185,6 @@ async fn test_admin_global_policy() {
             max_notifications_per_user_per_hour: 500,
             max_ttl_seconds: 86400,
             max_escalations: 10,
-            default_channels: vec![DeliveryChannel::Email as i32],
             rate_limit_per_service_per_second: 200,
         })
         .await
@@ -328,6 +326,8 @@ async fn test_send_and_get_notification() {
             group_key: "grp-1".into(),
             ttl_seconds: 3600,
             metadata: HashMap::from([("source".into(), "test".into())]),
+            action_url: "https://example.com/notif".into(),
+            icon: "mail".into(),
         })
         .await
         .unwrap()
@@ -348,8 +348,10 @@ async fn test_send_and_get_notification() {
         .into_inner();
 
     assert_eq!(notif.id, resp.notification_id);
-    assert_eq!(notif.state, NotificationState::Unread as i32);
+    assert_eq!(notif.state, NotificationState::Unseen as i32);
     assert_eq!(notif.recipient_user_id, "test-admin");
+    assert_eq!(notif.action_url, "https://example.com/notif");
+    assert_eq!(notif.icon, "mail");
 }
 
 #[tokio::test]
@@ -379,6 +381,8 @@ async fn test_send_notification_invalid_payload() {
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: HashMap::new(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await;
 
@@ -414,6 +418,8 @@ async fn test_list_and_filter_notifications() {
                 group_key: String::new(),
                 ttl_seconds: 0,
                 metadata: HashMap::new(),
+                action_url: String::new(),
+                icon: String::new(),
             })
             .await
             .unwrap();
@@ -442,6 +448,51 @@ async fn test_list_and_filter_notifications() {
 }
 
 #[tokio::test]
+async fn test_unseen_count() {
+    let mut env = common::TestEnv::new().await;
+    let (svc_slug, type_key) = setup_service(&mut env).await;
+
+    for _ in 0..2 {
+        env.notification_client
+            .send_notification(SendNotificationRequest {
+                service_slug: svc_slug.clone(),
+                notification_type: type_key.clone(),
+                recipient_user_id: "test-admin".into(),
+                level: String::new(),
+                payload: Some(prost_types::Struct {
+                    fields: BTreeMap::from([(
+                        "title".to_string(),
+                        prost_types::Value {
+                            kind: Some(prost_types::value::Kind::StringValue("T".into())),
+                        },
+                    )]),
+                }),
+                idempotency_key: String::new(),
+                group_key: String::new(),
+                ttl_seconds: 0,
+                metadata: HashMap::new(),
+                action_url: String::new(),
+                icon: String::new(),
+            })
+            .await
+            .unwrap();
+    }
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    let resp = env
+        .notification_client
+        .get_unseen_count(GetUnseenCountRequest {
+            service_slugs: vec![],
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(resp.total_count, 2);
+}
+
+#[tokio::test]
 async fn test_unread_count() {
     let mut env = common::TestEnv::new().await;
     let (svc_slug, type_key) = setup_service(&mut env).await;
@@ -465,12 +516,22 @@ async fn test_unread_count() {
                 group_key: String::new(),
                 ttl_seconds: 0,
                 metadata: HashMap::new(),
+                action_url: String::new(),
+                icon: String::new(),
             })
             .await
             .unwrap();
     }
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Mark seen first (unseen -> unread)
+    env.notification_client
+        .mark_seen(MarkSeenRequest {
+            notification_ids: vec![],
+        })
+        .await
+        .unwrap();
 
     let resp = env
         .notification_client
@@ -487,7 +548,7 @@ async fn test_unread_count() {
 // ─── Lifecycle Tests ─────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_mark_read_unread_dismiss() {
+async fn test_mark_seen_read_unread_dismiss() {
     let mut env = common::TestEnv::new().await;
     let (svc_slug, type_key) = setup_service(&mut env).await;
 
@@ -510,6 +571,8 @@ async fn test_mark_read_unread_dismiss() {
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: HashMap::new(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await
         .unwrap()
@@ -518,6 +581,36 @@ async fn test_mark_read_unread_dismiss() {
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let nid = resp.notification_id.clone();
+
+    // Verify initial state is unseen
+    let notif = env
+        .notification_client
+        .get_notification(GetNotificationRequest {
+            notification_id: nid.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(notif.state, NotificationState::Unseen as i32);
+
+    // Mark seen (unseen -> unread)
+    env.notification_client
+        .mark_seen(MarkSeenRequest {
+            notification_ids: vec![nid.clone()],
+        })
+        .await
+        .unwrap();
+
+    let notif = env
+        .notification_client
+        .get_notification(GetNotificationRequest {
+            notification_id: nid.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(notif.state, NotificationState::Unread as i32);
+    assert!(notif.seen_at.is_some());
 
     // Mark read
     env.notification_client
@@ -598,6 +691,8 @@ async fn test_snooze() {
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: HashMap::new(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await
         .unwrap()
@@ -647,6 +742,8 @@ async fn test_user_preferences() {
     env.user_config_client
         .update_preferences(UpdatePreferencesRequest {
             global_enabled: false,
+            catch_up_mode: "all_unseen".into(),
+            sort_mode: "priority".into(),
         })
         .await
         .unwrap();
@@ -659,6 +756,8 @@ async fn test_user_preferences() {
         .into_inner();
 
     assert!(!prefs.global_enabled);
+    assert_eq!(prefs.catch_up_mode, "all_unseen");
+    assert_eq!(prefs.sort_mode, "priority");
 }
 
 #[tokio::test]
@@ -672,7 +771,6 @@ async fn test_user_service_preferences() {
             service_slug: svc_slug.clone(),
             enabled: true,
             min_severity: 5,
-            channels: vec![DeliveryChannel::Email as i32, DeliveryChannel::Push as i32],
         })
         .await
         .unwrap()
@@ -680,7 +778,6 @@ async fn test_user_service_preferences() {
 
     assert!(pref.enabled);
     assert_eq!(pref.min_severity, 5);
-    assert_eq!(pref.channels.len(), 2);
 
     env.user_config_client
         .delete_service_preference(DeleteServicePreferenceRequest {
@@ -735,57 +832,6 @@ async fn test_user_mute_rules() {
     assert!(rules.rules.is_empty());
 }
 
-#[tokio::test]
-async fn test_user_device_registration() {
-    let mut env = common::TestEnv::new().await;
-
-    let device = env
-        .user_config_client
-        .register_device(RegisterDeviceRequest {
-            device_id: "iphone-1".into(),
-            platform: "ios".into(),
-            push_token: "fcm-token-abc".into(),
-        })
-        .await
-        .unwrap()
-        .into_inner();
-
-    assert_eq!(device.device_id, "iphone-1");
-    assert_eq!(device.platform, "ios");
-
-    env.user_config_client
-        .unregister_device(UnregisterDeviceRequest {
-            device_id: "iphone-1".into(),
-        })
-        .await
-        .unwrap();
-}
-
-#[tokio::test]
-async fn test_user_channel_config() {
-    let mut env = common::TestEnv::new().await;
-
-    env.user_config_client
-        .update_channel_config(UpdateChannelConfigRequest {
-            email_address: "test@example.com".into(),
-            phone_number: "+1234567890".into(),
-            webhook_url: String::new(),
-            webhook_secret: String::new(),
-        })
-        .await
-        .unwrap();
-
-    let config = env
-        .user_config_client
-        .get_channel_config(GetChannelConfigRequest {})
-        .await
-        .unwrap()
-        .into_inner();
-
-    assert_eq!(config.email_address, "test@example.com");
-    assert_eq!(config.phone_number, "+1234567890");
-}
-
 // ─── Streaming Tests ─────────────────────────────────────────────────
 
 #[tokio::test]
@@ -798,7 +844,6 @@ async fn test_realtime_streaming() {
         .streaming_client
         .subscribe(SubscribeRequest {
             service_slugs: vec![],
-            states: vec![],
             include_state_changes: true,
         })
         .await
@@ -826,6 +871,8 @@ async fn test_realtime_streaming() {
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: HashMap::new(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await
         .unwrap();
@@ -846,10 +893,10 @@ async fn test_realtime_streaming() {
     }
 }
 
-// ─── Admin Replay Tests ──────────────────────────────────────────────
+// ─── Admin Resurface Tests ──────────────────────────────────────────
 
 #[tokio::test]
-async fn test_replay_notification() {
+async fn test_resurface_notification() {
     let mut env = common::TestEnv::new().await;
     let (svc_slug, type_key) = setup_service(&mut env).await;
 
@@ -864,7 +911,7 @@ async fn test_replay_notification() {
                 fields: BTreeMap::from([(
                     "title".to_string(),
                     prost_types::Value {
-                        kind: Some(prost_types::value::Kind::StringValue("Replay".into())),
+                        kind: Some(prost_types::value::Kind::StringValue("Resurface".into())),
                     },
                 )]),
             }),
@@ -872,6 +919,8 @@ async fn test_replay_notification() {
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: HashMap::new(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await
         .unwrap()
@@ -879,14 +928,64 @@ async fn test_replay_notification() {
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    // Replay should succeed
+    // Resurface should succeed
     env.admin_client
-        .replay_notification(ReplayNotificationRequest {
+        .resurface_notification(ResurfaceNotificationRequest {
             notification_id: resp.notification_id,
-            channels: vec![DeliveryChannel::Push as i32],
+            action: EscalationAction::Resurface as i32,
         })
         .await
         .unwrap();
+}
+
+// ─── Dismiss All In Group Tests ─────────────────────────────────────
+
+#[tokio::test]
+async fn test_dismiss_all_in_group() {
+    let mut env = common::TestEnv::new().await;
+    let (svc_slug, type_key) = setup_service(&mut env).await;
+
+    // Send 3 notifications with the same service
+    for i in 0..3 {
+        env.notification_client
+            .send_notification(SendNotificationRequest {
+                service_slug: svc_slug.clone(),
+                notification_type: type_key.clone(),
+                recipient_user_id: "test-admin".into(),
+                level: String::new(),
+                payload: Some(prost_types::Struct {
+                    fields: BTreeMap::from([(
+                        "title".to_string(),
+                        prost_types::Value {
+                            kind: Some(prost_types::value::Kind::StringValue(
+                                format!("Group {i}"),
+                            )),
+                        },
+                    )]),
+                }),
+                idempotency_key: String::new(),
+                group_key: "batch".into(),
+                ttl_seconds: 0,
+                metadata: HashMap::new(),
+                action_url: String::new(),
+                icon: String::new(),
+            })
+            .await
+            .unwrap();
+    }
+
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    let resp = env
+        .notification_client
+        .dismiss_all_in_group(DismissAllInGroupRequest {
+            service_slug: svc_slug,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(resp.dismissed_count, 3);
 }
 
 // ─── Batch Notification Tests ────────────────────────────────────────
@@ -916,6 +1015,8 @@ async fn test_send_notification_batch() {
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: HashMap::new(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .collect();
 

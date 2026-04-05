@@ -42,89 +42,206 @@ async fn setup_svc(env: &mut common::TestEnv, slug: &str) {
             display_name: "Message".into(),
             description: String::new(),
             json_schema: Some(simple_schema()),
-            default_channels: vec![
-                DeliveryChannel::Push as i32,
-                DeliveryChannel::Sms as i32,
-                DeliveryChannel::Webhook as i32,
-            ],
             default_ttl_seconds: 0,
             escalation_interval_seconds: 0,
             max_escalations: 0,
+            escalation_action: EscalationAction::Unspecified as i32,
+            default_icon: String::new(),
         })
         .await
         .unwrap();
 }
 
-/// Test that delivery attempts are created for each configured channel.
+/// Test that new notifications start in unseen state.
 #[tokio::test]
-async fn test_delivery_attempts_created_per_channel() {
+async fn test_new_notification_starts_unseen() {
     let mut env = common::TestEnv::new().await;
-    setup_svc(&mut env, "multi-ch").await;
-
-    // Register device so push delivery has tokens
-    env.user_config_client
-        .register_device(RegisterDeviceRequest {
-            device_id: "test-phone".into(),
-            platform: "android".into(),
-            push_token: "fcm-test-token".into(),
-        })
-        .await
-        .unwrap();
-
-    // Set up channel config for SMS/webhook
-    env.user_config_client
-        .update_channel_config(UpdateChannelConfigRequest {
-            email_address: String::new(),
-            phone_number: "+15551234567".into(),
-            webhook_url: "https://webhook.test/notify".into(),
-            webhook_secret: "secret123".into(),
-        })
-        .await
-        .unwrap();
+    setup_svc(&mut env, "inbox-test").await;
 
     let resp = env
         .notification_client
         .send_notification(SendNotificationRequest {
-            service_slug: "multi-ch".into(),
+            service_slug: "inbox-test".into(),
             notification_type: "msg".into(),
             recipient_user_id: "test-admin".into(),
             level: String::new(),
-            payload: text_payload("Multi-channel delivery"),
+            payload: text_payload("Unseen test"),
             idempotency_key: String::new(),
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: Default::default(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await
         .unwrap()
         .into_inner();
 
-    // Wait for processor + delivery workers
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    // Check delivery attempts were created in DB
-    let notif_id: uuid::Uuid = resp.notification_id.parse().unwrap();
-    let attempts = estafeta_server::db::delivery::list_delivery_attempts_for_notification(
-        &env.pool,
-        notif_id,
-    )
-    .await
-    .unwrap();
+    let notif = env
+        .notification_client
+        .get_notification(GetNotificationRequest {
+            notification_id: resp.notification_id,
+        })
+        .await
+        .unwrap()
+        .into_inner();
 
-    // Should have attempts for push, sms, webhook
-    assert!(
-        attempts.len() >= 3,
-        "expected at least 3 delivery attempts, got {}",
-        attempts.len()
+    assert_eq!(
+        notif.state,
+        NotificationState::Unseen as i32,
+        "new notification should start in unseen state"
     );
-
-    let channels: Vec<&str> = attempts.iter().map(|a| a.channel.as_str()).collect();
-    assert!(channels.contains(&"push"), "missing push attempt");
-    assert!(channels.contains(&"sms"), "missing sms attempt");
-    assert!(channels.contains(&"webhook"), "missing webhook attempt");
 }
 
-/// Test that a notification with a disabled user preference is auto-dismissed.
+/// Test MarkSeen transitions unseen -> unread.
+#[tokio::test]
+async fn test_mark_seen_transitions_to_unread() {
+    let mut env = common::TestEnv::new().await;
+    setup_svc(&mut env, "seen-test").await;
+
+    let resp = env
+        .notification_client
+        .send_notification(SendNotificationRequest {
+            service_slug: "seen-test".into(),
+            notification_type: "msg".into(),
+            recipient_user_id: "test-admin".into(),
+            level: String::new(),
+            payload: text_payload("Mark seen test"),
+            idempotency_key: String::new(),
+            group_key: String::new(),
+            ttl_seconds: 0,
+            metadata: Default::default(),
+            action_url: String::new(),
+            icon: String::new(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Mark seen
+    let seen_resp = env
+        .notification_client
+        .mark_seen(MarkSeenRequest {
+            notification_ids: vec![resp.notification_id.clone()],
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(seen_resp.marked_count, 1);
+
+    let notif = env
+        .notification_client
+        .get_notification(GetNotificationRequest {
+            notification_id: resp.notification_id,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(notif.state, NotificationState::Unread as i32);
+    assert!(notif.seen_at.is_some());
+}
+
+/// Test GetUnseenCount returns correct count.
+#[tokio::test]
+async fn test_get_unseen_count() {
+    let mut env = common::TestEnv::new().await;
+    setup_svc(&mut env, "count-test").await;
+
+    for _ in 0..3 {
+        env.notification_client
+            .send_notification(SendNotificationRequest {
+                service_slug: "count-test".into(),
+                notification_type: "msg".into(),
+                recipient_user_id: "test-admin".into(),
+                level: String::new(),
+                payload: text_payload("Count me"),
+                idempotency_key: String::new(),
+                group_key: String::new(),
+                ttl_seconds: 0,
+                metadata: Default::default(),
+                action_url: String::new(),
+                icon: String::new(),
+            })
+            .await
+            .unwrap();
+    }
+
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    let resp = env
+        .notification_client
+        .get_unseen_count(GetUnseenCountRequest {
+            service_slugs: vec![],
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(resp.total_count, 3);
+}
+
+/// Test DismissAllInGroup dismisses all notifications for a service.
+#[tokio::test]
+async fn test_dismiss_all_in_group() {
+    let mut env = common::TestEnv::new().await;
+    setup_svc(&mut env, "dismiss-grp").await;
+
+    for i in 0..3 {
+        env.notification_client
+            .send_notification(SendNotificationRequest {
+                service_slug: "dismiss-grp".into(),
+                notification_type: "msg".into(),
+                recipient_user_id: "test-admin".into(),
+                level: String::new(),
+                payload: text_payload(&format!("Dismiss {i}")),
+                idempotency_key: String::new(),
+                group_key: "batch".into(),
+                ttl_seconds: 0,
+                metadata: Default::default(),
+                action_url: String::new(),
+                icon: String::new(),
+            })
+            .await
+            .unwrap();
+    }
+
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    let resp = env
+        .notification_client
+        .dismiss_all_in_group(DismissAllInGroupRequest {
+            service_slug: "dismiss-grp".into(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(resp.dismissed_count, 3);
+
+    // Verify they are dismissed
+    let list = env
+        .notification_client
+        .list_notifications(ListNotificationsRequest {
+            states: vec![NotificationState::Dismissed as i32],
+            service_slugs: vec!["dismiss-grp".into()],
+            notification_types: vec![],
+            group_key: String::new(),
+            pagination: None,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(list.notifications.len(), 3);
+}
+
+/// Test that a notification with a muted service is auto-dismissed.
 #[tokio::test]
 async fn test_muted_user_auto_dismisses() {
     let mut env = common::TestEnv::new().await;
@@ -152,6 +269,8 @@ async fn test_muted_user_auto_dismisses() {
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: Default::default(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await
         .unwrap()
@@ -185,6 +304,8 @@ async fn test_globally_disabled_user() {
     env.user_config_client
         .update_preferences(UpdatePreferencesRequest {
             global_enabled: false,
+            catch_up_mode: String::new(),
+            sort_mode: String::new(),
         })
         .await
         .unwrap();
@@ -201,6 +322,8 @@ async fn test_globally_disabled_user() {
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: Default::default(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await
         .unwrap()
@@ -249,6 +372,8 @@ async fn test_send_to_disabled_service_fails() {
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: Default::default(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await;
 
@@ -259,7 +384,7 @@ async fn test_send_to_disabled_service_fails() {
     );
 }
 
-/// Test that admin service update works end-to-end.
+/// Test admin service update works end-to-end.
 #[tokio::test]
 async fn test_admin_update_service() {
     let mut env = common::TestEnv::new().await;
@@ -305,6 +430,8 @@ async fn test_send_to_nonexistent_service() {
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: Default::default(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await;
 
@@ -330,6 +457,8 @@ async fn test_send_nonexistent_type() {
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: Default::default(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await;
 
@@ -374,6 +503,8 @@ async fn test_list_by_state_filter() {
                 group_key: String::new(),
                 ttl_seconds: 0,
                 metadata: Default::default(),
+                action_url: String::new(),
+                icon: String::new(),
             })
             .await
             .unwrap()
@@ -383,7 +514,13 @@ async fn test_list_by_state_filter() {
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    // Mark one as read
+    // Mark one as seen first, then read
+    env.notification_client
+        .mark_seen(MarkSeenRequest {
+            notification_ids: vec![ids[0].clone()],
+        })
+        .await
+        .unwrap();
     env.notification_client
         .mark_read(MarkReadRequest {
             notification_ids: vec![ids[0].clone()],
@@ -391,11 +528,11 @@ async fn test_list_by_state_filter() {
         .await
         .unwrap();
 
-    // List only unread
+    // List only unseen (the other one should still be unseen)
     let resp = env
         .notification_client
         .list_notifications(ListNotificationsRequest {
-            states: vec![NotificationState::Unread as i32],
+            states: vec![NotificationState::Unseen as i32],
             service_slugs: vec![],
             notification_types: vec![],
             group_key: String::new(),

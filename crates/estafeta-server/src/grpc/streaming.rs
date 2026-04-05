@@ -90,6 +90,8 @@ impl StreamingServiceTrait for StreamingServiceImpl {
                                             metadata: event.metadata.unwrap_or_default(),
                                             created_at: None,
                                             expires_at: None,
+                                            action_url: event.action_url.unwrap_or_default(),
+                                            icon: event.icon.unwrap_or_default(),
                                         },
                                     ),
                                 ),

@@ -3,8 +3,8 @@ use serde::Deserialize;
 
 /// Top-level server configuration, loaded from `ESTAFETA_`-prefixed environment variables.
 ///
-/// Nested structs (e.g. `SmtpConfig`) are populated via double-underscore separators,
-/// for example `ESTAFETA_SMTP__HOST`.
+/// Nested structs are populated via double-underscore separators,
+/// for example `ESTAFETA_NATS_URL`.
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     #[serde(default = "default_grpc_port")]
@@ -18,61 +18,8 @@ pub struct Config {
     pub jwt_issuer: Option<String>,
     pub keto_url: String,
 
-    // Delivery channels (all optional)
-    #[serde(default)]
-    pub smtp: Option<SmtpConfig>,
-    #[serde(default)]
-    pub ses: Option<SesConfig>,
-    #[serde(default)]
-    pub fcm: Option<FcmConfig>,
-    #[serde(default)]
-    pub apns: Option<ApnsConfig>,
-    #[serde(default)]
-    pub sns: Option<SnsConfig>,
-
     #[serde(default = "default_log_level")]
     pub log_level: String,
-}
-
-/// SMTP configuration for email delivery.
-#[derive(Debug, Deserialize, Clone)]
-pub struct SmtpConfig {
-    pub host: String,
-    #[serde(default = "default_smtp_port")]
-    pub port: u16,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub from_address: String,
-}
-
-/// AWS SES configuration for email delivery.
-#[derive(Debug, Deserialize, Clone)]
-pub struct SesConfig {
-    pub region: String,
-    pub from_address: String,
-}
-
-/// Firebase Cloud Messaging configuration for push notifications.
-#[derive(Debug, Deserialize, Clone)]
-pub struct FcmConfig {
-    pub credentials_path: String,
-}
-
-/// Apple Push Notification Service configuration.
-#[derive(Debug, Deserialize, Clone)]
-pub struct ApnsConfig {
-    pub key_path: String,
-    pub key_id: String,
-    pub team_id: String,
-    pub topic: String,
-    #[serde(default)]
-    pub sandbox: bool,
-}
-
-/// AWS SNS configuration for SMS delivery.
-#[derive(Debug, Deserialize, Clone)]
-pub struct SnsConfig {
-    pub region: String,
 }
 
 fn default_grpc_port() -> u16 {
@@ -81,10 +28,6 @@ fn default_grpc_port() -> u16 {
 
 fn default_database_max_connections() -> u32 {
     10
-}
-
-fn default_smtp_port() -> u16 {
-    587
 }
 
 fn default_log_level() -> String {
@@ -108,7 +51,6 @@ mod tests {
     fn test_defaults() {
         assert_eq!(default_grpc_port(), 50051);
         assert_eq!(default_database_max_connections(), 10);
-        assert_eq!(default_smtp_port(), 587);
         assert_eq!(default_log_level(), "info");
     }
 
@@ -127,8 +69,6 @@ mod tests {
         assert_eq!(config.nats_url, "nats://localhost:4222");
         assert_eq!(config.grpc_port, 50051); // default
         assert_eq!(config.log_level, "info"); // default
-        assert!(config.smtp.is_none());
-        assert!(config.ses.is_none());
 
         // SAFETY: test-only cleanup
         unsafe {

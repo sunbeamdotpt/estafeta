@@ -1,15 +1,14 @@
 use chrono::Utc;
 
 use crate::cache::{
-    CachedNotificationType, CachedServicePref,
+    CachedNotificationType,
     CachedUserPrefs,
 };
 
-/// The resolved delivery configuration for a single notification.
+/// The resolved configuration for a single notification.
 #[derive(Debug, Clone)]
-pub struct ResolvedDeliveryConfig {
+pub struct ResolvedConfig {
     pub should_deliver: bool,
-    pub channels: Vec<String>,
     pub ttl_seconds: Option<i32>,
     pub escalation_interval_seconds: Option<i32>,
     pub max_escalations: i32,
@@ -17,19 +16,17 @@ pub struct ResolvedDeliveryConfig {
     pub skip_reason: Option<String>,
 }
 
-/// Resolve the effective delivery config by applying the preference hierarchy:
-/// Global Policy → Service/Type Defaults → User Service Pref → User Type Pref → Mute Rules
+/// Resolve the effective config by applying the preference hierarchy:
+/// Global Policy -> Service/Type Defaults -> User Service Pref -> User Type Pref -> Mute Rules
 pub fn resolve(
     user_prefs: &CachedUserPrefs,
     notif_type: &CachedNotificationType,
     level_severity: Option<i32>,
-    default_channels: &[String],
-) -> ResolvedDeliveryConfig {
+) -> ResolvedConfig {
     // 1. Global user toggle
     if !user_prefs.global_enabled {
-        return ResolvedDeliveryConfig {
+        return ResolvedConfig {
             should_deliver: false,
-            channels: vec![],
             ttl_seconds: notif_type.default_ttl_seconds,
             escalation_interval_seconds: notif_type.escalation_interval_seconds,
             max_escalations: notif_type.max_escalations,
@@ -48,9 +45,8 @@ pub fn resolve(
             rule.muted_until.is_none() || rule.muted_until.is_some_and(|t| t > now);
 
         if matches_service && matches_type && is_active {
-            return ResolvedDeliveryConfig {
+            return ResolvedConfig {
                 should_deliver: false,
-                channels: vec![],
                 ttl_seconds: notif_type.default_ttl_seconds,
                 escalation_interval_seconds: notif_type.escalation_interval_seconds,
                 max_escalations: notif_type.max_escalations,
@@ -67,9 +63,8 @@ pub fn resolve(
 
     if let Some(sp) = service_pref {
         if !sp.enabled {
-            return ResolvedDeliveryConfig {
+            return ResolvedConfig {
                 should_deliver: false,
-                channels: vec![],
                 ttl_seconds: notif_type.default_ttl_seconds,
                 escalation_interval_seconds: notif_type.escalation_interval_seconds,
                 max_escalations: notif_type.max_escalations,
@@ -80,9 +75,8 @@ pub fn resolve(
         // Check min severity threshold
         if let (Some(min_sev), Some(level_sev)) = (sp.min_severity, level_severity) {
             if level_sev < min_sev {
-                return ResolvedDeliveryConfig {
+                return ResolvedConfig {
                     should_deliver: false,
-                    channels: vec![],
                     ttl_seconds: notif_type.default_ttl_seconds,
                     escalation_interval_seconds: notif_type.escalation_interval_seconds,
                     max_escalations: notif_type.max_escalations,
@@ -102,9 +96,8 @@ pub fn resolve(
 
     if let Some(tp) = type_pref {
         if !tp.enabled {
-            return ResolvedDeliveryConfig {
+            return ResolvedConfig {
                 should_deliver: false,
-                channels: vec![],
                 ttl_seconds: notif_type.default_ttl_seconds,
                 escalation_interval_seconds: notif_type.escalation_interval_seconds,
                 max_escalations: notif_type.max_escalations,
@@ -113,24 +106,8 @@ pub fn resolve(
         }
     }
 
-    // 5. Resolve channels: type pref > service pref > notification type defaults > global defaults
-    let channels = if let Some(tp) = type_pref {
-        if let Some(ref ch) = tp.channels {
-            if !ch.is_empty() {
-                ch.clone()
-            } else {
-                resolve_channels_from_service(service_pref, notif_type, default_channels)
-            }
-        } else {
-            resolve_channels_from_service(service_pref, notif_type, default_channels)
-        }
-    } else {
-        resolve_channels_from_service(service_pref, notif_type, default_channels)
-    };
-
-    ResolvedDeliveryConfig {
+    ResolvedConfig {
         should_deliver: true,
-        channels,
         ttl_seconds: notif_type.default_ttl_seconds,
         escalation_interval_seconds: notif_type.escalation_interval_seconds,
         max_escalations: notif_type.max_escalations,
@@ -138,26 +115,10 @@ pub fn resolve(
     }
 }
 
-fn resolve_channels_from_service(
-    service_pref: Option<&CachedServicePref>,
-    notif_type: &CachedNotificationType,
-    default_channels: &[String],
-) -> Vec<String> {
-    if let Some(sp) = service_pref {
-        if !sp.channels.is_empty() {
-            return sp.channels.clone();
-        }
-    }
-    if !notif_type.default_channels.is_empty() {
-        return notif_type.default_channels.clone();
-    }
-    default_channels.to_vec()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache::{CachedMuteRule, CachedTypePref};
+    use crate::cache::{CachedMuteRule, CachedServicePref, CachedTypePref};
     use uuid::Uuid;
 
     fn make_notif_type() -> CachedNotificationType {
@@ -166,10 +127,11 @@ mod tests {
             service_id: Uuid::new_v4(),
             type_key: "test".into(),
             json_schema: serde_json::json!({}),
-            default_channels: vec!["email".into()],
             default_ttl_seconds: Some(3600),
             escalation_interval_seconds: None,
             max_escalations: 0,
+            escalation_action: "resurface".into(),
+            default_icon: None,
             enabled: true,
         }
     }
@@ -187,7 +149,7 @@ mod tests {
     fn test_global_disabled() {
         let mut prefs = make_user_prefs();
         prefs.global_enabled = false;
-        let result = resolve(&prefs, &make_notif_type(), None, &["email".into()]);
+        let result = resolve(&prefs, &make_notif_type(), None);
         assert!(!result.should_deliver);
     }
 
@@ -200,7 +162,7 @@ mod tests {
             notification_type_id: None,
             muted_until: None,
         });
-        let result = resolve(&prefs, &nt, None, &["email".into()]);
+        let result = resolve(&prefs, &nt, None);
         assert!(!result.should_deliver);
     }
 
@@ -212,9 +174,8 @@ mod tests {
             service_id: nt.service_id,
             enabled: true,
             min_severity: Some(5),
-            channels: vec![],
         });
-        let result = resolve(&prefs, &nt, Some(2), &["email".into()]);
+        let result = resolve(&prefs, &nt, Some(2));
         assert!(!result.should_deliver);
     }
 
@@ -226,33 +187,28 @@ mod tests {
             service_id: nt.service_id,
             enabled: true,
             min_severity: Some(3),
-            channels: vec![],
         });
-        let result = resolve(&prefs, &nt, Some(5), &["email".into()]);
+        let result = resolve(&prefs, &nt, Some(5));
         assert!(result.should_deliver);
     }
 
     #[test]
-    fn test_type_pref_channels_override() {
+    fn test_type_pref_disabled() {
         let nt = make_notif_type();
         let mut prefs = make_user_prefs();
         prefs.type_prefs.push(CachedTypePref {
             notification_type_id: nt.id,
-            enabled: true,
-            channels: Some(vec!["push".into(), "sms".into()]),
+            enabled: false,
         });
-        let result = resolve(&prefs, &nt, None, &["email".into()]);
-        assert!(result.should_deliver);
-        assert_eq!(result.channels, vec!["push", "sms"]);
+        let result = resolve(&prefs, &nt, None);
+        assert!(!result.should_deliver);
     }
 
     #[test]
-    fn test_default_channels_fallback() {
+    fn test_default_deliver() {
         let prefs = make_user_prefs();
-        let mut nt = make_notif_type();
-        nt.default_channels = vec![];
-        let result = resolve(&prefs, &nt, None, &["webhook".into()]);
+        let nt = make_notif_type();
+        let result = resolve(&prefs, &nt, None);
         assert!(result.should_deliver);
-        assert_eq!(result.channels, vec!["webhook"]);
     }
 }

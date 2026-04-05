@@ -15,15 +15,8 @@ pub struct IngestMessage {
     pub group_key: Option<String>,
     pub ttl_seconds: Option<i32>,
     pub metadata: HashMap<String, String>,
-}
-
-/// Message published to delivery.dispatch.{channel} on JetStream.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DeliveryDispatchMessage {
-    pub notification_id: Uuid,
-    pub delivery_attempt_id: Uuid,
-    pub channel: String,
-    pub recipient_user_id: String,
+    pub action_url: Option<String>,
+    pub icon: Option<String>,
 }
 
 /// Event published to rt.user.{user_id} on NATS Core for real-time streaming.
@@ -39,7 +32,9 @@ pub struct RealtimeEvent {
     pub metadata: Option<HashMap<String, String>>,
     pub old_state: Option<String>,
     pub new_state: Option<String>,
-    pub unread_count: Option<i64>,
+    pub unseen_count: Option<i64>,
+    pub action_url: Option<String>,
+    pub icon: Option<String>,
 }
 
 /// Discriminator for real-time event payloads.
@@ -50,8 +45,8 @@ pub enum RealtimeEventType {
     NewNotification,
     /// An existing notification changed state (e.g. read, dismissed).
     StateChange,
-    /// The user's unread count changed.
-    UnreadCountUpdate,
+    /// The user's unseen count changed.
+    UnseenCountUpdate,
 }
 
 #[cfg(test)]
@@ -72,6 +67,8 @@ mod tests {
             group_key: None,
             ttl_seconds: Some(3600),
             metadata: HashMap::from([("source".into(), "signup".into())]),
+            action_url: Some("https://example.com/welcome".into()),
+            icon: Some("mail".into()),
         };
 
         let bytes = serde_json::to_vec(&msg).unwrap();
@@ -79,21 +76,7 @@ mod tests {
         assert_eq!(decoded.notification_id, msg.notification_id);
         assert_eq!(decoded.service_slug, "email-svc");
         assert_eq!(decoded.idempotency_key, Some("idem-123".into()));
-    }
-
-    #[test]
-    fn test_delivery_dispatch_roundtrip() {
-        let msg = DeliveryDispatchMessage {
-            notification_id: Uuid::new_v4(),
-            delivery_attempt_id: Uuid::new_v4(),
-            channel: "email".into(),
-            recipient_user_id: "user-2".into(),
-        };
-
-        let bytes = serde_json::to_vec(&msg).unwrap();
-        let decoded: DeliveryDispatchMessage = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(decoded.channel, "email");
-        assert_eq!(decoded.notification_id, msg.notification_id);
+        assert_eq!(decoded.action_url, Some("https://example.com/welcome".into()));
     }
 
     #[test]
@@ -109,7 +92,9 @@ mod tests {
             metadata: Some(HashMap::new()),
             old_state: None,
             new_state: None,
-            unread_count: None,
+            unseen_count: None,
+            action_url: None,
+            icon: None,
         };
 
         let bytes = serde_json::to_vec(&event).unwrap();
@@ -125,8 +110,8 @@ mod tests {
         let json_str = serde_json::to_string(&RealtimeEventType::StateChange).unwrap();
         assert_eq!(json_str, "\"state_change\"");
 
-        let json_str = serde_json::to_string(&RealtimeEventType::UnreadCountUpdate).unwrap();
-        assert_eq!(json_str, "\"unread_count_update\"");
+        let json_str = serde_json::to_string(&RealtimeEventType::UnseenCountUpdate).unwrap();
+        assert_eq!(json_str, "\"unseen_count_update\"");
     }
 
     #[test]
@@ -142,6 +127,8 @@ mod tests {
             group_key: None,
             ttl_seconds: None,
             metadata: HashMap::new(),
+            action_url: None,
+            icon: None,
         };
 
         let bytes = serde_json::to_vec(&msg).unwrap();
@@ -149,5 +136,7 @@ mod tests {
         assert!(decoded.idempotency_key.is_none());
         assert!(decoded.group_key.is_none());
         assert!(decoded.ttl_seconds.is_none());
+        assert!(decoded.action_url.is_none());
+        assert!(decoded.icon.is_none());
     }
 }

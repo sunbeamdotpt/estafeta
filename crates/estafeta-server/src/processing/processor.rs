@@ -8,10 +8,10 @@ use tracing::{error, info, warn};
 
 use crate::cache::*;
 use crate::db;
-use crate::nats::{DeliveryDispatchMessage, NatsPublisher, RealtimeEvent, RealtimeEventType};
+use crate::nats::{NatsPublisher, RealtimeEvent, RealtimeEventType};
 use crate::processing::preference_resolver;
 
-/// The main notification processor: pulls from JetStream, persists to PG, and fans out.
+/// The main notification processor: pulls from JetStream, persists to PG, and publishes events.
 pub struct Processor {
     pool: PgPool,
     publisher: NatsPublisher,
@@ -112,16 +112,11 @@ impl Processor {
             .get_or_load_user_prefs(&ingest.recipient_user_id)
             .await?;
 
-        // Load global policy defaults
-        let global_policy = db::preferences::get_global_policy(&self.pool).await?;
-        let default_channels = global_policy.default_channels;
-
-        // Resolve delivery config
+        // Resolve config
         let config = preference_resolver::resolve(
             &user_prefs,
             &notif_type,
             level_severity,
-            &default_channels,
         );
 
         // Compute TTL
@@ -136,12 +131,15 @@ impl Processor {
             }
         });
 
-        // Determine state
+        // Determine state: unseen if should_deliver, dismissed otherwise
         let state = if config.should_deliver {
-            "unread"
+            "unseen"
         } else {
             "dismissed"
         };
+
+        // Resolve icon: per-notification icon takes precedence over type default
+        let icon = ingest.icon.clone().or_else(|| notif_type.default_icon.clone());
 
         // Persist
         let notification = db::notifications::insert_notification(
@@ -159,33 +157,13 @@ impl Processor {
                 metadata: serde_json::to_value(&ingest.metadata)?,
                 expires_at,
                 next_escalation_at,
+                action_url: ingest.action_url.clone(),
+                icon: icon.clone(),
             },
         )
         .await?;
 
         if config.should_deliver {
-            // Enqueue delivery for each channel
-            for channel in &config.channels {
-                let attempt = db::delivery::insert_delivery_attempt(
-                    &self.pool,
-                    notification.id,
-                    channel,
-                )
-                .await?;
-
-                self.publisher
-                    .publish_delivery(
-                        channel,
-                        &DeliveryDispatchMessage {
-                            notification_id: notification.id,
-                            delivery_attempt_id: attempt.id,
-                            channel: channel.clone(),
-                            recipient_user_id: ingest.recipient_user_id.clone(),
-                        },
-                    )
-                    .await?;
-            }
-
             // Publish real-time event
             self.publisher
                 .publish_realtime(
@@ -201,7 +179,9 @@ impl Processor {
                         metadata: Some(ingest.metadata),
                         old_state: None,
                         new_state: None,
-                        unread_count: None,
+                        unseen_count: None,
+                        action_url: ingest.action_url,
+                        icon,
                     },
                 )
                 .await?;
@@ -241,10 +221,11 @@ impl Processor {
             service_id: nt.service_id,
             type_key: nt.type_key,
             json_schema: nt.json_schema,
-            default_channels: nt.default_channels,
             default_ttl_seconds: nt.default_ttl_seconds,
             escalation_interval_seconds: nt.escalation_interval_seconds,
             max_escalations: nt.max_escalations,
+            escalation_action: nt.escalation_action,
+            default_icon: nt.default_icon,
             enabled: nt.enabled,
         });
 
@@ -309,7 +290,6 @@ impl Processor {
                     service_id: sp.service_id,
                     enabled: sp.enabled,
                     min_severity: sp.min_severity,
-                    channels: sp.channels,
                 })
                 .collect(),
             type_prefs: type_prefs
@@ -317,7 +297,6 @@ impl Processor {
                 .map(|tp| CachedTypePref {
                     notification_type_id: tp.notification_type_id,
                     enabled: tp.enabled,
-                    channels: tp.channels,
                 })
                 .collect(),
             mute_rules: mute_rules

@@ -4,13 +4,12 @@ use tonic::{Request, Response, Status};
 
 use estafeta_proto::estafeta::v1::{
     user_config_service_server::UserConfigService as UserConfigServiceTrait,
-    ChannelConfig, CreateMuteRuleRequest, DeleteMuteRuleRequest,
-    DeleteServicePreferenceRequest, DeleteTypePreferenceRequest, Device,
-    GetChannelConfigRequest, GetPreferencesRequest, ListMuteRulesRequest,
-    ListMuteRulesResponse, MuteRule, RegisterDeviceRequest, ServicePreference,
+    CreateMuteRuleRequest, DeleteMuteRuleRequest,
+    DeleteServicePreferenceRequest, DeleteTypePreferenceRequest,
+    GetPreferencesRequest, ListMuteRulesRequest,
+    ListMuteRulesResponse, MuteRule, ServicePreference,
     SetServicePreferenceRequest, SetTypePreferenceRequest, TypePreference,
-    UnregisterDeviceRequest, UpdateChannelConfigRequest, UpdatePreferencesRequest,
-    UserPreferences,
+    UpdatePreferencesRequest, UserPreferences,
 };
 
 use crate::auth::AuthClaims;
@@ -31,26 +30,6 @@ fn to_timestamp(dt: chrono::DateTime<chrono::Utc>) -> Option<Timestamp> {
         seconds: dt.timestamp(),
         nanos: dt.timestamp_subsec_nanos() as i32,
     })
-}
-
-fn channel_from_proto(ch: i32) -> String {
-    match ch {
-        1 => "email".into(),
-        2 => "push".into(),
-        3 => "sms".into(),
-        4 => "webhook".into(),
-        _ => "email".into(),
-    }
-}
-
-fn channel_to_proto(ch: &str) -> i32 {
-    match ch {
-        "email" => 1,
-        "push" => 2,
-        "sms" => 3,
-        "webhook" => 4,
-        _ => 0,
-    }
 }
 
 #[tonic::async_trait]
@@ -75,13 +54,14 @@ impl UserConfigServiceTrait for UserConfigServiceImpl {
 
         Ok(Response::new(UserPreferences {
             global_enabled: pref.global_enabled,
+            catch_up_mode: pref.catch_up_mode,
+            sort_mode: pref.sort_mode,
             service_preferences: svc_prefs
                 .into_iter()
                 .map(|sp| ServicePreference {
                     service_slug: String::new(), // would need reverse lookup
                     enabled: sp.enabled,
                     min_severity: sp.min_severity.unwrap_or(0),
-                    channels: sp.channels.iter().map(|c| channel_to_proto(c)).collect(),
                 })
                 .collect(),
             type_preferences: type_prefs
@@ -90,12 +70,6 @@ impl UserConfigServiceTrait for UserConfigServiceImpl {
                     service_slug: String::new(),
                     type_key: String::new(),
                     enabled: tp.enabled,
-                    channels: tp
-                        .channels
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|c| channel_to_proto(c))
-                        .collect(),
                 })
                 .collect(),
         }))
@@ -108,16 +82,31 @@ impl UserConfigServiceTrait for UserConfigServiceImpl {
         let subject = AuthClaims::from_extensions(request.extensions())?.subject.clone();
         let req = request.into_inner();
 
+        let catch_up_mode = if req.catch_up_mode.is_empty() {
+            "all_unseen"
+        } else {
+            &req.catch_up_mode
+        };
+        let sort_mode = if req.sort_mode.is_empty() {
+            "chronological"
+        } else {
+            &req.sort_mode
+        };
+
         let pref = db::preferences::update_user_preference(
             &self.pool,
             &subject,
             req.global_enabled,
+            catch_up_mode,
+            sort_mode,
         )
         .await
         .map_err(|e| Status::internal(format!("db error: {e}")))?;
 
         Ok(Response::new(UserPreferences {
             global_enabled: pref.global_enabled,
+            catch_up_mode: pref.catch_up_mode,
+            sort_mode: pref.sort_mode,
             service_preferences: vec![],
             type_preferences: vec![],
         }))
@@ -135,15 +124,12 @@ impl UserConfigServiceTrait for UserConfigServiceImpl {
             .map_err(|e| Status::internal(format!("db error: {e}")))?
             .ok_or_else(|| Status::not_found("service not found"))?;
 
-        let channels: Vec<String> = req.channels.iter().map(|c| channel_from_proto(*c)).collect();
-
         let row = db::preferences::upsert_service_preference(
             &self.pool,
             &subject,
             service.id,
             req.enabled,
             if req.min_severity > 0 { Some(req.min_severity) } else { None },
-            &channels,
         )
         .await
         .map_err(|e| Status::internal(format!("db error: {e}")))?;
@@ -152,7 +138,6 @@ impl UserConfigServiceTrait for UserConfigServiceImpl {
             service_slug: req.service_slug,
             enabled: row.enabled,
             min_severity: row.min_severity.unwrap_or(0),
-            channels: row.channels.iter().map(|c| channel_to_proto(c)).collect(),
         }))
     }
 
@@ -192,14 +177,11 @@ impl UserConfigServiceTrait for UserConfigServiceImpl {
             .map_err(|e| Status::internal(format!("db error: {e}")))?
             .ok_or_else(|| Status::not_found("notification type not found"))?;
 
-        let channels: Vec<String> = req.channels.iter().map(|c| channel_from_proto(*c)).collect();
-
         let row = db::preferences::upsert_type_preference(
             &self.pool,
             &subject,
             nt.id,
             req.enabled,
-            if channels.is_empty() { None } else { Some(&channels) },
         )
         .await
         .map_err(|e| Status::internal(format!("db error: {e}")))?;
@@ -208,12 +190,6 @@ impl UserConfigServiceTrait for UserConfigServiceImpl {
             service_slug: req.service_slug,
             type_key: req.type_key,
             enabled: row.enabled,
-            channels: row
-                .channels
-                .unwrap_or_default()
-                .iter()
-                .map(|c| channel_to_proto(c))
-                .collect(),
         }))
     }
 
@@ -340,93 +316,5 @@ impl UserConfigServiceTrait for UserConfigServiceImpl {
         }
 
         Ok(Response::new(()))
-    }
-
-    async fn register_device(
-        &self,
-        request: Request<RegisterDeviceRequest>,
-    ) -> Result<Response<Device>, Status> {
-        let subject = AuthClaims::from_extensions(request.extensions())?.subject.clone();
-        let req = request.into_inner();
-
-        let row = db::preferences::upsert_device(
-            &self.pool,
-            &subject,
-            &req.device_id,
-            &req.platform,
-            &req.push_token,
-        )
-        .await
-        .map_err(|e| Status::internal(format!("db error: {e}")))?;
-
-        Ok(Response::new(Device {
-            id: row.id.to_string(),
-            device_id: row.device_id,
-            platform: row.platform,
-            push_token: row.push_token,
-            created_at: to_timestamp(row.created_at),
-        }))
-    }
-
-    async fn unregister_device(
-        &self,
-        request: Request<UnregisterDeviceRequest>,
-    ) -> Result<Response<()>, Status> {
-        let subject = AuthClaims::from_extensions(request.extensions())?.subject.clone();
-        let req = request.into_inner();
-
-        db::preferences::delete_device(&self.pool, &subject, &req.device_id)
-            .await
-            .map_err(|e| Status::internal(format!("db error: {e}")))?;
-
-        Ok(Response::new(()))
-    }
-
-    async fn update_channel_config(
-        &self,
-        request: Request<UpdateChannelConfigRequest>,
-    ) -> Result<Response<ChannelConfig>, Status> {
-        let subject = AuthClaims::from_extensions(request.extensions())?.subject.clone();
-        let req = request.into_inner();
-
-        let row = db::preferences::upsert_channel_config(
-            &self.pool,
-            &subject,
-            if req.email_address.is_empty() { None } else { Some(&req.email_address) },
-            if req.phone_number.is_empty() { None } else { Some(&req.phone_number) },
-            if req.webhook_url.is_empty() { None } else { Some(&req.webhook_url) },
-            if req.webhook_secret.is_empty() { None } else { Some(&req.webhook_secret) },
-        )
-        .await
-        .map_err(|e| Status::internal(format!("db error: {e}")))?;
-
-        Ok(Response::new(ChannelConfig {
-            email_address: row.email_address.unwrap_or_default(),
-            phone_number: row.phone_number.unwrap_or_default(),
-            webhook_url: row.webhook_url.unwrap_or_default(),
-            webhook_secret_set: row.webhook_secret.is_some(),
-        }))
-    }
-
-    async fn get_channel_config(
-        &self,
-        request: Request<GetChannelConfigRequest>,
-    ) -> Result<Response<ChannelConfig>, Status> {
-        let subject = AuthClaims::from_extensions(request.extensions())?.subject.clone();
-        let _req = request.into_inner();
-
-        let row = db::preferences::get_channel_config(&self.pool, &subject)
-            .await
-            .map_err(|e| Status::internal(format!("db error: {e}")))?;
-
-        Ok(Response::new(match row {
-            Some(r) => ChannelConfig {
-                email_address: r.email_address.unwrap_or_default(),
-                phone_number: r.phone_number.unwrap_or_default(),
-                webhook_url: r.webhook_url.unwrap_or_default(),
-                webhook_secret_set: r.webhook_secret.is_some(),
-            },
-            None => ChannelConfig::default(),
-        }))
     }
 }

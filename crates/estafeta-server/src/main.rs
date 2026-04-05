@@ -2,13 +2,10 @@ mod auth;
 mod cache;
 mod config;
 mod db;
-mod delivery;
 mod grpc;
 mod lifecycle;
 mod nats;
 mod processing;
-
-use std::sync::Arc;
 
 use sqlx::postgres::PgPoolOptions;
 use tonic::transport::Server;
@@ -88,69 +85,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     });
     info!("notification processor started");
-
-    // Start delivery workers
-    let delivery_stream = js.get_stream("DELIVERY").await?;
-
-    // Email
-    if let Some(ref smtp_config) = config.smtp {
-        let email_channel = Arc::new(delivery::email::EmailChannel::new(smtp_config)?);
-        let consumer = delivery_stream
-            .get_consumer::<async_nats::jetstream::consumer::pull::Config>("delivery-email")
-            .await?;
-        let worker = delivery::DeliveryWorker::new(pool.clone(), email_channel, consumer);
-        tokio::spawn(async move {
-            if let Err(e) = worker.run().await {
-                tracing::error!(error = %e, "email delivery worker crashed");
-            }
-        });
-        info!("email delivery worker started");
-    }
-
-    // Push
-    {
-        let push_channel = Arc::new(delivery::push::PushChannel::new());
-        let consumer = delivery_stream
-            .get_consumer::<async_nats::jetstream::consumer::pull::Config>("delivery-push")
-            .await?;
-        let worker = delivery::DeliveryWorker::new(pool.clone(), push_channel, consumer);
-        tokio::spawn(async move {
-            if let Err(e) = worker.run().await {
-                tracing::error!(error = %e, "push delivery worker crashed");
-            }
-        });
-        info!("push delivery worker started");
-    }
-
-    // SMS
-    {
-        let sms_channel = Arc::new(delivery::sms::SmsChannel::new());
-        let consumer = delivery_stream
-            .get_consumer::<async_nats::jetstream::consumer::pull::Config>("delivery-sms")
-            .await?;
-        let worker = delivery::DeliveryWorker::new(pool.clone(), sms_channel, consumer);
-        tokio::spawn(async move {
-            if let Err(e) = worker.run().await {
-                tracing::error!(error = %e, "sms delivery worker crashed");
-            }
-        });
-        info!("sms delivery worker started");
-    }
-
-    // Webhook
-    {
-        let webhook_channel = Arc::new(delivery::webhook::WebhookChannel::new());
-        let consumer = delivery_stream
-            .get_consumer::<async_nats::jetstream::consumer::pull::Config>("delivery-webhook")
-            .await?;
-        let worker = delivery::DeliveryWorker::new(pool.clone(), webhook_channel, consumer);
-        tokio::spawn(async move {
-            if let Err(e) = worker.run().await {
-                tracing::error!(error = %e, "webhook delivery worker crashed");
-            }
-        });
-        info!("webhook delivery worker started");
-    }
 
     // Start lifecycle scheduler
     let scheduler = lifecycle::Scheduler::new(pool.clone(), publisher.clone());

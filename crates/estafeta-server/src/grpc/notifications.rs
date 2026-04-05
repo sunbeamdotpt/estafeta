@@ -4,10 +4,12 @@ use tonic::{Request, Response, Status};
 
 use estafeta_proto::estafeta::v1::{
     notification_service_server::NotificationService as NotificationServiceTrait,
-    DismissRequest, GetNotificationRequest, GetUnreadCountRequest, ListNotificationsRequest,
-    ListNotificationsResponse, MarkReadRequest, MarkUnreadRequest, Notification,
+    DismissAllInGroupRequest, DismissAllInGroupResponse, DismissRequest,
+    GetNotificationRequest, GetUnreadCountRequest, GetUnseenCountRequest,
+    ListNotificationsRequest, ListNotificationsResponse, MarkReadRequest,
+    MarkSeenRequest, MarkSeenResponse, MarkUnreadRequest, Notification,
     SendNotificationBatchRequest, SendNotificationBatchResponse, SendNotificationRequest,
-    SendNotificationResponse, SnoozeRequest, UnreadCountResponse,
+    SendNotificationResponse, SnoozeRequest, UnreadCountResponse, UnseenCountResponse,
 };
 
 use crate::auth::{AuthClaims, KetoClient};
@@ -74,11 +76,14 @@ fn row_to_proto(row: &db::notifications::NotificationRow) -> Notification {
             })
             .unwrap_or_default(),
         created_at: to_timestamp(row.created_at),
+        seen_at: opt_timestamp(row.seen_at),
         read_at: opt_timestamp(row.read_at),
         snoozed_until: opt_timestamp(row.snoozed_until),
         expires_at: opt_timestamp(row.expires_at),
         escalation_count: row.escalation_count,
         recipient_user_id: row.recipient_user_id.clone(),
+        action_url: row.action_url.clone().unwrap_or_default(),
+        icon: row.icon.clone().unwrap_or_default(),
     }
 }
 
@@ -155,6 +160,16 @@ impl NotificationServiceTrait for NotificationServiceImpl {
                 None
             },
             metadata: req.metadata,
+            action_url: if req.action_url.is_empty() {
+                None
+            } else {
+                Some(req.action_url)
+            },
+            icon: if req.icon.is_empty() {
+                None
+            } else {
+                Some(req.icon)
+            },
         };
 
         self.publisher
@@ -279,6 +294,30 @@ impl NotificationServiceTrait for NotificationServiceImpl {
         }))
     }
 
+    async fn mark_seen(
+        &self,
+        request: Request<MarkSeenRequest>,
+    ) -> Result<Response<MarkSeenResponse>, Status> {
+        let subject = AuthClaims::from_extensions(request.extensions())?.subject.clone();
+        let req = request.into_inner();
+
+        let marked = if req.notification_ids.is_empty() {
+            // Mark all unseen as seen
+            db::notifications::mark_all_seen(&self.pool, &subject)
+                .await
+                .map_err(|e| Status::internal(format!("db error: {e}")))?
+        } else {
+            let ids = parse_uuids(&req.notification_ids)?;
+            db::notifications::mark_seen(&self.pool, &subject, &ids)
+                .await
+                .map_err(|e| Status::internal(format!("db error: {e}")))?
+        };
+
+        Ok(Response::new(MarkSeenResponse {
+            marked_count: marked as i64,
+        }))
+    }
+
     async fn mark_read(
         &self,
         request: Request<MarkReadRequest>,
@@ -350,6 +389,63 @@ impl NotificationServiceTrait for NotificationServiceImpl {
         Ok(Response::new(()))
     }
 
+    async fn dismiss_all_in_group(
+        &self,
+        request: Request<DismissAllInGroupRequest>,
+    ) -> Result<Response<DismissAllInGroupResponse>, Status> {
+        let subject = AuthClaims::from_extensions(request.extensions())?.subject.clone();
+        let req = request.into_inner();
+
+        let service = db::services::get_service_by_slug(&self.pool, &req.service_slug)
+            .await
+            .map_err(|e| Status::internal(format!("db error: {e}")))?
+            .ok_or_else(|| Status::not_found("service not found"))?;
+
+        let dismissed = db::notifications::dismiss_all_in_group(&self.pool, &subject, service.id)
+            .await
+            .map_err(|e| Status::internal(format!("db error: {e}")))?;
+
+        Ok(Response::new(DismissAllInGroupResponse {
+            dismissed_count: dismissed as i64,
+        }))
+    }
+
+    async fn get_unseen_count(
+        &self,
+        request: Request<GetUnseenCountRequest>,
+    ) -> Result<Response<UnseenCountResponse>, Status> {
+        let subject = AuthClaims::from_extensions(request.extensions())?.subject.clone();
+        let req = request.into_inner();
+
+        let mut service_ids = Vec::new();
+        for slug in &req.service_slugs {
+            if let Some(svc) = db::services::get_service_by_slug(&self.pool, slug)
+                .await
+                .map_err(|e| Status::internal(format!("db error: {e}")))?
+            {
+                service_ids.push(svc.id);
+            }
+        }
+
+        let total = db::notifications::count_unseen(&self.pool, &subject, &service_ids)
+            .await
+            .map_err(|e| Status::internal(format!("db error: {e}")))?;
+
+        let by_service = db::notifications::count_unseen_by_service(&self.pool, &subject)
+            .await
+            .map_err(|e| Status::internal(format!("db error: {e}")))?;
+
+        let count_map: std::collections::HashMap<String, i64> = by_service
+            .into_iter()
+            .map(|(id, count)| (id.to_string(), count))
+            .collect();
+
+        Ok(Response::new(UnseenCountResponse {
+            total_count: total,
+            count_by_service: count_map,
+        }))
+    }
+
     async fn get_unread_count(
         &self,
         request: Request<GetUnreadCountRequest>,
@@ -375,8 +471,6 @@ impl NotificationServiceTrait for NotificationServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("db error: {e}")))?;
 
-        // Convert service IDs back to slugs would require a reverse lookup.
-        // For now, use the UUID string as key.
         let count_map: std::collections::HashMap<String, i64> = by_service
             .into_iter()
             .map(|(id, count)| (id.to_string(), count))

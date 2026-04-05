@@ -1,10 +1,10 @@
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use sqlx::PgPool;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::db;
-use crate::nats::{NatsPublisher, RealtimeEvent, RealtimeEventType, DeliveryDispatchMessage};
+use crate::nats::{NatsPublisher, RealtimeEvent, RealtimeEventType};
 
 const BATCH_SIZE: i64 = 100;
 
@@ -91,7 +91,9 @@ async fn run_snooze_wake(pool: &PgPool, publisher: &NatsPublisher) -> Result<()>
                     metadata: None,
                     old_state: Some("snoozed".into()),
                     new_state: Some("unread".into()),
-                    unread_count: None,
+                    unseen_count: None,
+                    action_url: None,
+                    icon: None,
                 },
             )
             .await?;
@@ -117,9 +119,11 @@ async fn run_ttl_expiry(pool: &PgPool, publisher: &NatsPublisher) -> Result<()> 
                     payload: None,
                     group_key: None,
                     metadata: None,
-                    old_state: None, // could be unread or read
+                    old_state: None, // could be unseen, unread or read
                     new_state: Some("expired".into()),
-                    unread_count: None,
+                    unseen_count: None,
+                    action_url: None,
+                    icon: None,
                 },
             )
             .await?;
@@ -127,7 +131,7 @@ async fn run_ttl_expiry(pool: &PgPool, publisher: &NatsPublisher) -> Result<()> 
     Ok(())
 }
 
-async fn run_escalation(pool: &PgPool, publisher: &NatsPublisher) -> Result<()> {
+async fn run_escalation(pool: &PgPool, _publisher: &NatsPublisher) -> Result<()> {
     let due = db::notifications::get_escalation_due(pool, BATCH_SIZE).await?;
     if !due.is_empty() {
         info!(count = due.len(), "escalating notifications");
@@ -136,16 +140,13 @@ async fn run_escalation(pool: &PgPool, publisher: &NatsPublisher) -> Result<()> 
         let new_count = notif.escalation_count + 1;
 
         // Look up the notification type to get escalation config
-        let notif_type = db::schemas::get_notification_type(
+        let notif_type = db::schemas::get_notification_type_by_id(
             pool,
-            notif.service_id,
-            // We don't have the type_key here, so use the ID lookup path
-            "",
+            notif.notification_type_id,
         )
         .await?;
 
         // Compute next escalation time
-        // For simplicity, we'll re-query by ID
         let next_escalation_at = if let Some(nt) = &notif_type {
             if new_count < nt.max_escalations {
                 nt.escalation_interval_seconds
@@ -159,25 +160,36 @@ async fn run_escalation(pool: &PgPool, publisher: &NatsPublisher) -> Result<()> 
 
         db::notifications::update_escalation(pool, notif.id, new_count, next_escalation_at).await?;
 
-        // Re-enqueue delivery for the notification's channels
-        let attempts = db::delivery::list_delivery_attempts_for_notification(pool, notif.id).await?;
-        for attempt in &attempts {
-            if attempt.status == "sent" || attempt.status == "delivered" {
-                // Re-create a delivery attempt for escalation
-                let new_attempt =
-                    db::delivery::insert_delivery_attempt(pool, notif.id, &attempt.channel).await?;
+        // Perform escalation action based on the notification type's config
+        let action = notif_type
+            .as_ref()
+            .map(|nt| nt.escalation_action.as_str())
+            .unwrap_or("resurface");
 
-                publisher
-                    .publish_delivery(
-                        &attempt.channel,
-                        &DeliveryDispatchMessage {
-                            notification_id: notif.id,
-                            delivery_attempt_id: new_attempt.id,
-                            channel: attempt.channel.clone(),
-                            recipient_user_id: notif.recipient_user_id.clone(),
-                        },
-                    )
-                    .await?;
+        match action {
+            "resurface" => {
+                // Set state back to unseen, clear seen_at
+                db::notifications::resurface_notification(pool, notif.id).await?;
+            }
+            "bump" => {
+                // Update updated_at to now, bringing it to the top
+                db::notifications::bump_notification(pool, notif.id).await?;
+            }
+            "elevate" => {
+                // TODO: implement level elevation
+                warn!(
+                    notification_id = %notif.id,
+                    "escalation_action=elevate is not yet implemented, treating as resurface"
+                );
+                db::notifications::resurface_notification(pool, notif.id).await?;
+            }
+            _ => {
+                warn!(
+                    notification_id = %notif.id,
+                    action = %action,
+                    "unknown escalation action, treating as resurface"
+                );
+                db::notifications::resurface_notification(pool, notif.id).await?;
             }
         }
     }

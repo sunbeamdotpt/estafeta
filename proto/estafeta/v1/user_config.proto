@@ -33,37 +33,30 @@ service UserConfigService {
 
   // Delete a mute rule
   rpc DeleteMuteRule(DeleteMuteRuleRequest) returns (google.protobuf.Empty);
-
-  // Register a device for push notifications
-  rpc RegisterDevice(RegisterDeviceRequest) returns (Device);
-
-  // Unregister a device
-  rpc UnregisterDevice(UnregisterDeviceRequest) returns (google.protobuf.Empty);
-
-  // Update delivery channel contact info
-  rpc UpdateChannelConfig(UpdateChannelConfigRequest) returns (ChannelConfig);
-
-  // Get delivery channel contact info
-  rpc GetChannelConfig(GetChannelConfigRequest) returns (ChannelConfig);
 }
 
 message GetPreferencesRequest {}
 
 message UserPreferences {
   bool global_enabled = 1;
-  repeated ServicePreference service_preferences = 2;
-  repeated TypePreference type_preferences = 3;
+  // How to handle reconnect: "since_last_seen" or "all_unseen"
+  string catch_up_mode = 2;
+  // Default sort: "chronological" or "priority"
+  string sort_mode = 3;
+  repeated ServicePreference service_preferences = 4;
+  repeated TypePreference type_preferences = 5;
 }
 
 message UpdatePreferencesRequest {
   bool global_enabled = 1;
+  string catch_up_mode = 2;
+  string sort_mode = 3;
 }
 
 message SetServicePreferenceRequest {
   string service_slug = 1;
   bool enabled = 2;
   int32 min_severity = 3;
-  repeated DeliveryChannel channels = 4;
 }
 
 message DeleteServicePreferenceRequest {
@@ -74,14 +67,12 @@ message ServicePreference {
   string service_slug = 1;
   bool enabled = 2;
   int32 min_severity = 3;
-  repeated DeliveryChannel channels = 4;
 }
 
 message SetTypePreferenceRequest {
   string service_slug = 1;
   string type_key = 2;
   bool enabled = 3;
-  repeated DeliveryChannel channels = 4;
 }
 
 message DeleteTypePreferenceRequest {
@@ -93,7 +84,6 @@ message TypePreference {
   string service_slug = 1;
   string type_key = 2;
   bool enabled = 3;
-  repeated DeliveryChannel channels = 4;
 }
 
 message ListMuteRulesRequest {}
@@ -118,38 +108,4 @@ message MuteRule {
 
 message DeleteMuteRuleRequest {
   string rule_id = 1;
-}
-
-message RegisterDeviceRequest {
-  string device_id = 1;
-  string platform = 2;
-  string push_token = 3;
-}
-
-message Device {
-  string id = 1;
-  string device_id = 2;
-  string platform = 3;
-  string push_token = 4;
-  google.protobuf.Timestamp created_at = 5;
-}
-
-message UnregisterDeviceRequest {
-  string device_id = 1;
-}
-
-message UpdateChannelConfigRequest {
-  string email_address = 1;
-  string phone_number = 2;
-  string webhook_url = 3;
-  string webhook_secret = 4;
-}
-
-message GetChannelConfigRequest {}
-
-message ChannelConfig {
-  string email_address = 1;
-  string phone_number = 2;
-  string webhook_url = 3;
-  bool webhook_secret_set = 4;
 }

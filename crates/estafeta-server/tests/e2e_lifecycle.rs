@@ -42,10 +42,11 @@ async fn setup_with_escalation(env: &mut common::TestEnv) -> (String, String) {
             display_name: "Urgent".into(),
             description: String::new(),
             json_schema: Some(simple_schema()),
-            default_channels: vec![DeliveryChannel::Push as i32],
             default_ttl_seconds: 60,
             escalation_interval_seconds: 1, // 1 second for fast test
             max_escalations: 2,
+            escalation_action: EscalationAction::Resurface as i32,
+            default_icon: String::new(),
         })
         .await
         .unwrap();
@@ -85,10 +86,11 @@ async fn test_notification_with_ttl_expires() {
             display_name: "Ephemeral".into(),
             description: String::new(),
             json_schema: Some(simple_schema()),
-            default_channels: vec![DeliveryChannel::Push as i32],
             default_ttl_seconds: 1, // 1 second TTL
             escalation_interval_seconds: 0,
             max_escalations: 0,
+            escalation_action: EscalationAction::Unspecified as i32,
+            default_icon: String::new(),
         })
         .await
         .unwrap();
@@ -105,6 +107,8 @@ async fn test_notification_with_ttl_expires() {
             group_key: String::new(),
             ttl_seconds: 1,
             metadata: Default::default(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await
         .unwrap()
@@ -150,10 +154,11 @@ async fn test_snooze_and_wake_via_scheduler() {
             display_name: "Reminder".into(),
             description: String::new(),
             json_schema: Some(simple_schema()),
-            default_channels: vec![DeliveryChannel::Push as i32],
             default_ttl_seconds: 0,
             escalation_interval_seconds: 0,
             max_escalations: 0,
+            escalation_action: EscalationAction::Unspecified as i32,
+            default_icon: String::new(),
         })
         .await
         .unwrap();
@@ -170,6 +175,8 @@ async fn test_snooze_and_wake_via_scheduler() {
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: Default::default(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await
         .unwrap()
@@ -242,10 +249,11 @@ async fn test_schema_update_type() {
             display_name: "Original".into(),
             description: String::new(),
             json_schema: Some(simple_schema()),
-            default_channels: vec![DeliveryChannel::Email as i32],
             default_ttl_seconds: 0,
             escalation_interval_seconds: 0,
             max_escalations: 0,
+            escalation_action: EscalationAction::Resurface as i32,
+            default_icon: String::new(),
         })
         .await
         .unwrap();
@@ -259,14 +267,12 @@ async fn test_schema_update_type() {
             display_name: "Updated".into(),
             description: "Now with description".into(),
             json_schema: Some(simple_schema()),
-            default_channels: vec![
-                DeliveryChannel::Email as i32,
-                DeliveryChannel::Push as i32,
-            ],
             default_ttl_seconds: 7200,
             escalation_interval_seconds: 300,
             max_escalations: 3,
+            escalation_action: EscalationAction::Bump as i32,
             enabled: true,
+            default_icon: "update".into(),
         })
         .await
         .unwrap()
@@ -354,10 +360,11 @@ async fn test_user_type_preferences() {
             display_name: "Alert".into(),
             description: String::new(),
             json_schema: Some(simple_schema()),
-            default_channels: vec![DeliveryChannel::Email as i32],
             default_ttl_seconds: 0,
             escalation_interval_seconds: 0,
             max_escalations: 0,
+            escalation_action: EscalationAction::Unspecified as i32,
+            default_icon: String::new(),
         })
         .await
         .unwrap();
@@ -368,7 +375,6 @@ async fn test_user_type_preferences() {
             service_slug: "tp-svc".into(),
             type_key: "alert".into(),
             enabled: false,
-            channels: vec![DeliveryChannel::Webhook as i32],
         })
         .await
         .unwrap()
@@ -405,10 +411,11 @@ async fn test_streaming_with_state_changes() {
             display_name: "Message".into(),
             description: String::new(),
             json_schema: Some(simple_schema()),
-            default_channels: vec![DeliveryChannel::Push as i32],
             default_ttl_seconds: 0,
             escalation_interval_seconds: 0,
             max_escalations: 0,
+            escalation_action: EscalationAction::Unspecified as i32,
+            default_icon: String::new(),
         })
         .await
         .unwrap();
@@ -418,7 +425,6 @@ async fn test_streaming_with_state_changes() {
         .streaming_client
         .subscribe(SubscribeRequest {
             service_slugs: vec!["str-svc".into()],
-            states: vec![],
             include_state_changes: true,
         })
         .await
@@ -438,6 +444,8 @@ async fn test_streaming_with_state_changes() {
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: Default::default(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await
         .unwrap()
@@ -501,10 +509,11 @@ async fn test_streaming_with_service_filter() {
                 display_name: "Message".into(),
                 description: String::new(),
                 json_schema: Some(simple_schema()),
-                default_channels: vec![DeliveryChannel::Push as i32],
                 default_ttl_seconds: 0,
                 escalation_interval_seconds: 0,
                 max_escalations: 0,
+                escalation_action: EscalationAction::Unspecified as i32,
+                default_icon: String::new(),
             })
             .await
             .unwrap();
@@ -515,7 +524,6 @@ async fn test_streaming_with_service_filter() {
         .streaming_client
         .subscribe(SubscribeRequest {
             service_slugs: vec!["filt-a".into()],
-            states: vec![],
             include_state_changes: false,
         })
         .await
@@ -534,6 +542,8 @@ async fn test_streaming_with_service_filter() {
             group_key: String::new(),
             ttl_seconds: 0,
             metadata: Default::default(),
+            action_url: String::new(),
+            icon: String::new(),
         })
         .await
         .unwrap();

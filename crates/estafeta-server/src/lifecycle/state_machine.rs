@@ -3,6 +3,7 @@ use std::fmt;
 /// Strongly-typed notification lifecycle state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NotificationState {
+    Unseen,
     Unread,
     Read,
     Snoozed,
@@ -13,6 +14,7 @@ pub enum NotificationState {
 /// Strongly-typed state transition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transition {
+    MarkSeen,
     MarkRead,
     MarkUnread,
     Snooze,
@@ -38,6 +40,7 @@ impl NotificationState {
     /// Returns which transitions are valid from this state.
     pub fn valid_transitions(self) -> &'static [Transition] {
         match self {
+            Self::Unseen => &[Transition::MarkSeen, Transition::Snooze, Transition::Dismiss, Transition::Expire],
             Self::Unread => &[Transition::MarkRead, Transition::Snooze, Transition::Dismiss, Transition::Expire],
             Self::Read => &[Transition::MarkUnread, Transition::Dismiss, Transition::Expire],
             Self::Snoozed => &[Transition::Wake, Transition::Expire],
@@ -66,6 +69,7 @@ impl NotificationState {
     /// The database string representation.
     pub fn as_db_str(self) -> &'static str {
         match self {
+            Self::Unseen => "unseen",
             Self::Unread => "unread",
             Self::Read => "read",
             Self::Snoozed => "snoozed",
@@ -77,6 +81,7 @@ impl NotificationState {
     /// Parse from database string.
     pub fn from_db_str(s: &str) -> Result<Self, UnknownState> {
         match s {
+            "unseen" => Ok(Self::Unseen),
             "unread" => Ok(Self::Unread),
             "read" => Ok(Self::Read),
             "snoozed" => Ok(Self::Snoozed),
@@ -89,22 +94,24 @@ impl NotificationState {
     /// Convert to proto enum value.
     pub fn to_proto(self) -> i32 {
         match self {
-            Self::Unread => 1,
-            Self::Read => 2,
-            Self::Snoozed => 3,
-            Self::Dismissed => 4,
-            Self::Expired => 5,
+            Self::Unseen => 1,
+            Self::Unread => 2,
+            Self::Read => 3,
+            Self::Snoozed => 4,
+            Self::Dismissed => 5,
+            Self::Expired => 6,
         }
     }
 
     /// Parse from proto enum value.
     pub fn from_proto(v: i32) -> Result<Self, UnknownState> {
         match v {
-            1 => Ok(Self::Unread),
-            2 => Ok(Self::Read),
-            3 => Ok(Self::Snoozed),
-            4 => Ok(Self::Dismissed),
-            5 => Ok(Self::Expired),
+            1 => Ok(Self::Unseen),
+            2 => Ok(Self::Unread),
+            3 => Ok(Self::Read),
+            4 => Ok(Self::Snoozed),
+            5 => Ok(Self::Dismissed),
+            6 => Ok(Self::Expired),
             other => Err(UnknownState(other.to_string())),
         }
     }
@@ -114,6 +121,7 @@ impl Transition {
     /// The target state this transition leads to.
     pub fn target(self) -> NotificationState {
         match self {
+            Self::MarkSeen => NotificationState::Unread,
             Self::MarkRead => NotificationState::Read,
             Self::MarkUnread => NotificationState::Unread,
             Self::Snooze => NotificationState::Snoozed,
@@ -136,6 +144,18 @@ mod tests {
 
     #[test]
     fn test_valid_transitions() {
+        assert_eq!(
+            NotificationState::Unseen.apply(Transition::MarkSeen).unwrap(),
+            NotificationState::Unread,
+        );
+        assert_eq!(
+            NotificationState::Unseen.apply(Transition::Snooze).unwrap(),
+            NotificationState::Snoozed,
+        );
+        assert_eq!(
+            NotificationState::Unseen.apply(Transition::Dismiss).unwrap(),
+            NotificationState::Dismissed,
+        );
         assert_eq!(
             NotificationState::Unread.apply(Transition::MarkRead).unwrap(),
             NotificationState::Read,
@@ -168,10 +188,13 @@ mod tests {
         assert!(NotificationState::Expired.apply(Transition::MarkUnread).is_err());
         assert!(NotificationState::Read.apply(Transition::Snooze).is_err());
         assert!(NotificationState::Dismissed.apply(Transition::Wake).is_err());
+        assert!(NotificationState::Unseen.apply(Transition::MarkRead).is_err());
+        assert!(NotificationState::Unseen.apply(Transition::MarkUnread).is_err());
     }
 
     #[test]
     fn test_expire_from_all_non_terminal() {
+        assert!(NotificationState::Unseen.apply(Transition::Expire).is_ok());
         assert!(NotificationState::Unread.apply(Transition::Expire).is_ok());
         assert!(NotificationState::Read.apply(Transition::Expire).is_ok());
         assert!(NotificationState::Snoozed.apply(Transition::Expire).is_ok());
@@ -182,6 +205,7 @@ mod tests {
     #[test]
     fn test_db_roundtrip() {
         for state in [
+            NotificationState::Unseen,
             NotificationState::Unread,
             NotificationState::Read,
             NotificationState::Snoozed,
@@ -196,6 +220,7 @@ mod tests {
     #[test]
     fn test_proto_roundtrip() {
         for state in [
+            NotificationState::Unseen,
             NotificationState::Unread,
             NotificationState::Read,
             NotificationState::Snoozed,
@@ -209,12 +234,14 @@ mod tests {
 
     #[test]
     fn test_can_transition_to() {
+        assert!(NotificationState::Unseen.can_transition_to(NotificationState::Unread));
         assert!(NotificationState::Unread.can_transition_to(NotificationState::Read));
         assert!(!NotificationState::Dismissed.can_transition_to(NotificationState::Read));
     }
 
     #[test]
     fn test_display() {
+        assert_eq!(format!("{}", NotificationState::Unseen), "unseen");
         assert_eq!(format!("{}", NotificationState::Unread), "unread");
         assert_eq!(format!("{}", NotificationState::Expired), "expired");
     }

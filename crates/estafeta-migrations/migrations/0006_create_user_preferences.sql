@@ -3,6 +3,8 @@ CREATE TABLE user_preferences (
     tenant_id UUID,
     user_id TEXT NOT NULL UNIQUE,
     global_enabled BOOLEAN NOT NULL DEFAULT true,
+    catch_up_mode TEXT NOT NULL DEFAULT 'all_unseen',
+    sort_mode TEXT NOT NULL DEFAULT 'chronological',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -14,7 +16,6 @@ CREATE TABLE user_service_preferences (
     service_id UUID NOT NULL REFERENCES services(id) ON DELETE CASCADE,
     enabled BOOLEAN NOT NULL DEFAULT true,
     min_severity INT,
-    channels TEXT[] NOT NULL DEFAULT '{}',
     UNIQUE (user_id, service_id)
 );
 
@@ -24,6 +25,5 @@ CREATE TABLE user_type_preferences (
     user_id TEXT NOT NULL,
     notification_type_id UUID NOT NULL REFERENCES notification_types(id) ON DELETE CASCADE,
     enabled BOOLEAN NOT NULL DEFAULT true,
-    channels TEXT[],
     UNIQUE (user_id, notification_type_id)
 );

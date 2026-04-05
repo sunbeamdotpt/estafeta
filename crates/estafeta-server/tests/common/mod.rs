@@ -1,6 +1,4 @@
-use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::Arc;
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -11,7 +9,7 @@ use tonic::transport::Channel;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use estafeta_server::auth::{AuthInterceptor, JwksClient, KetoClient};
+use estafeta_server::auth::{JwksClient, KetoClient};
 use estafeta_server::cache::AppCaches;
 use estafeta_server::nats::{setup_jetstream, NatsPublisher};
 
@@ -188,33 +186,6 @@ impl TestEnv {
         tokio::spawn(async move {
             let _ = processor.run().await;
         });
-
-        // Start delivery workers
-        let delivery_stream = nats.js.get_stream("DELIVERY").await.unwrap();
-        for channel_name in &["email", "push", "sms", "webhook"] {
-            let consumer_name = format!("delivery-{channel_name}");
-            let consumer = delivery_stream
-                .get_consumer::<async_nats::jetstream::consumer::pull::Config>(&consumer_name)
-                .await
-                .unwrap();
-
-            let channel_impl: Arc<dyn estafeta_server::delivery::channel::DeliveryChannel> =
-                match *channel_name {
-                    "push" => Arc::new(estafeta_server::delivery::push::PushChannel::new()),
-                    "sms" => Arc::new(estafeta_server::delivery::sms::SmsChannel::new()),
-                    "webhook" => Arc::new(estafeta_server::delivery::webhook::WebhookChannel::new()),
-                    _ => Arc::new(estafeta_server::delivery::push::PushChannel::new()), // fallback stub
-                };
-
-            let worker = estafeta_server::delivery::DeliveryWorker::new(
-                db.pool.clone(),
-                channel_impl,
-                consumer,
-            );
-            tokio::spawn(async move {
-                let _ = worker.run().await;
-            });
-        }
 
         // Start lifecycle scheduler
         let scheduler =

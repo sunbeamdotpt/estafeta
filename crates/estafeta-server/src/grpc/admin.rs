@@ -5,7 +5,7 @@ use tonic::{Request, Response, Status};
 use estafeta_proto::estafeta::v1::{
     admin_service_server::AdminService as AdminServiceTrait, DisableServiceRequest,
     EnableServiceRequest, GetGlobalPolicyRequest, GlobalPolicy, ListServicesRequest,
-    ListServicesResponse, RegisterServiceRequest, ReplayNotificationRequest, Service,
+    ListServicesResponse, RegisterServiceRequest, ResurfaceNotificationRequest, Service,
     SetGlobalPolicyRequest, UpdateServiceRequest,
 };
 
@@ -36,23 +36,12 @@ fn to_timestamp(dt: chrono::DateTime<chrono::Utc>) -> Option<Timestamp> {
     })
 }
 
-fn channel_from_proto(ch: i32) -> String {
-    match ch {
-        1 => "email".into(),
-        2 => "push".into(),
-        3 => "sms".into(),
-        4 => "webhook".into(),
-        _ => "email".into(),
-    }
-}
-
-fn channel_to_proto(ch: &str) -> i32 {
-    match ch {
-        "email" => 1,
-        "push" => 2,
-        "sms" => 3,
-        "webhook" => 4,
-        _ => 0,
+fn escalation_action_from_proto(v: i32) -> &'static str {
+    match v {
+        1 => "resurface",
+        2 => "bump",
+        3 => "elevate",
+        _ => "resurface",
     }
 }
 
@@ -214,14 +203,12 @@ impl AdminServiceTrait for AdminServiceImpl {
         self.keto.require_admin(&subject).await?;
 
         let req = request.into_inner();
-        let channels: Vec<String> = req.default_channels.iter().map(|c| channel_from_proto(*c)).collect();
 
         let row = db::preferences::update_global_policy(
             &self.pool,
             req.max_notifications_per_user_per_hour,
             req.max_ttl_seconds,
             req.max_escalations,
-            &channels,
             req.rate_limit_per_service_per_second,
         )
         .await
@@ -231,7 +218,6 @@ impl AdminServiceTrait for AdminServiceImpl {
             max_notifications_per_user_per_hour: row.max_notifications_per_user_per_hour,
             max_ttl_seconds: row.max_ttl_seconds,
             max_escalations: row.max_escalations,
-            default_channels: row.default_channels.iter().map(|c| channel_to_proto(c)).collect(),
             rate_limit_per_service_per_second: row.rate_limit_per_service_per_second,
             updated_at: to_timestamp(row.updated_at),
         }))
@@ -254,15 +240,14 @@ impl AdminServiceTrait for AdminServiceImpl {
             max_notifications_per_user_per_hour: row.max_notifications_per_user_per_hour,
             max_ttl_seconds: row.max_ttl_seconds,
             max_escalations: row.max_escalations,
-            default_channels: row.default_channels.iter().map(|c| channel_to_proto(c)).collect(),
             rate_limit_per_service_per_second: row.rate_limit_per_service_per_second,
             updated_at: to_timestamp(row.updated_at),
         }))
     }
 
-    async fn replay_notification(
+    async fn resurface_notification(
         &self,
-        request: Request<ReplayNotificationRequest>,
+        request: Request<ResurfaceNotificationRequest>,
     ) -> Result<Response<()>, Status> {
         let subject = AuthClaims::from_extensions(request.extensions())?.subject.clone();
         self.keto.require_admin(&subject).await?;
@@ -273,39 +258,29 @@ impl AdminServiceTrait for AdminServiceImpl {
             .parse()
             .map_err(|_| Status::invalid_argument("invalid notification_id"))?;
 
-        let notif = db::notifications::get_notification(&self.pool, notif_id)
+        let _notif = db::notifications::get_notification(&self.pool, notif_id)
             .await
             .map_err(|e| Status::internal(format!("db error: {e}")))?
             .ok_or_else(|| Status::not_found("notification not found"))?;
 
-        let channels: Vec<String> = if req.channels.is_empty() {
-            // Re-deliver to all original channels
-            let attempts =
-                db::delivery::list_delivery_attempts_for_notification(&self.pool, notif_id)
+        let action = escalation_action_from_proto(req.action);
+
+        match action {
+            "resurface" => {
+                db::notifications::resurface_notification(&self.pool, notif_id)
                     .await
                     .map_err(|e| Status::internal(format!("db error: {e}")))?;
-            attempts.into_iter().map(|a| a.channel).collect()
-        } else {
-            req.channels.iter().map(|c| channel_from_proto(*c)).collect()
-        };
-
-        for channel in &channels {
-            let attempt = db::delivery::insert_delivery_attempt(&self.pool, notif_id, channel)
-                .await
-                .map_err(|e| Status::internal(format!("db error: {e}")))?;
-
-            self.publisher
-                .publish_delivery(
-                    channel,
-                    &crate::nats::DeliveryDispatchMessage {
-                        notification_id: notif_id,
-                        delivery_attempt_id: attempt.id,
-                        channel: channel.clone(),
-                        recipient_user_id: notif.recipient_user_id.clone(),
-                    },
-                )
-                .await
-                .map_err(|e| Status::internal(format!("nats error: {e}")))?;
+            }
+            "bump" => {
+                db::notifications::bump_notification(&self.pool, notif_id)
+                    .await
+                    .map_err(|e| Status::internal(format!("db error: {e}")))?;
+            }
+            _ => {
+                db::notifications::resurface_notification(&self.pool, notif_id)
+                    .await
+                    .map_err(|e| Status::internal(format!("db error: {e}")))?;
+            }
         }
 
         Ok(Response::new(()))

@@ -38,10 +38,12 @@ message RegisterTypeRequest {
   string display_name = 3;
   string description = 4;
   google.protobuf.Struct json_schema = 5;
-  repeated DeliveryChannel default_channels = 6;
-  int32 default_ttl_seconds = 7;
-  int32 escalation_interval_seconds = 8;
-  int32 max_escalations = 9;
+  int32 default_ttl_seconds = 6;
+  int32 escalation_interval_seconds = 7;
+  int32 max_escalations = 8;
+  EscalationAction escalation_action = 9;
+  // Default Material Symbol icon for this notification type
+  string default_icon = 10;
 }
 
 message UpdateTypeRequest {
@@ -50,11 +52,12 @@ message UpdateTypeRequest {
   string display_name = 3;
   string description = 4;
   google.protobuf.Struct json_schema = 5;
-  repeated DeliveryChannel default_channels = 6;
-  int32 default_ttl_seconds = 7;
-  int32 escalation_interval_seconds = 8;
-  int32 max_escalations = 9;
+  int32 default_ttl_seconds = 6;
+  int32 escalation_interval_seconds = 7;
+  int32 max_escalations = 8;
+  EscalationAction escalation_action = 9;
   bool enabled = 10;
+  string default_icon = 11;
 }
 
 message GetTypeRequest {
@@ -79,13 +82,14 @@ message NotificationType {
   string display_name = 4;
   string description = 5;
   google.protobuf.Struct json_schema = 6;
-  repeated DeliveryChannel default_channels = 7;
-  int32 default_ttl_seconds = 8;
-  int32 escalation_interval_seconds = 9;
-  int32 max_escalations = 10;
+  int32 default_ttl_seconds = 7;
+  int32 escalation_interval_seconds = 8;
+  int32 max_escalations = 9;
+  EscalationAction escalation_action = 10;
   bool enabled = 11;
-  google.protobuf.Timestamp created_at = 12;
-  google.protobuf.Timestamp updated_at = 13;
+  string default_icon = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
 }
 
 message RegisterLevelRequest {

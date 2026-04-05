@@ -1,7 +1,7 @@
 mod common;
 
 use estafeta_server::nats::{
-    setup_jetstream, DeliveryDispatchMessage, IngestMessage, NatsPublisher, RealtimeEvent,
+    setup_jetstream, IngestMessage, NatsPublisher, RealtimeEvent,
     RealtimeEventType,
 };
 use futures::StreamExt;
@@ -14,14 +14,10 @@ async fn test_jetstream_setup() {
 
     setup_jetstream(&nats.js).await.unwrap();
 
-    // Verify streams exist
+    // Verify NOTIFICATIONS stream exists
     let mut notif_stream = nats.js.get_stream("NOTIFICATIONS").await.unwrap();
     let info = notif_stream.info().await.unwrap();
     assert_eq!(info.config.name, "NOTIFICATIONS");
-
-    let mut delivery_stream = nats.js.get_stream("DELIVERY").await.unwrap();
-    let info = delivery_stream.info().await.unwrap();
-    assert_eq!(info.config.name, "DELIVERY");
 }
 
 #[tokio::test]
@@ -51,6 +47,8 @@ async fn test_publish_and_consume_ingest() {
         group_key: None,
         ttl_seconds: None,
         metadata: HashMap::new(),
+        action_url: Some("https://example.com".into()),
+        icon: Some("mail".into()),
     };
 
     publisher.publish_ingest("test-svc", &msg).await.unwrap();
@@ -72,42 +70,8 @@ async fn test_publish_and_consume_ingest() {
     let decoded: IngestMessage = serde_json::from_slice(&received.payload).unwrap();
     assert_eq!(decoded.notification_id, msg.notification_id);
     assert_eq!(decoded.service_slug, "test-svc");
-
-    received.ack().await.unwrap();
-}
-
-#[tokio::test]
-async fn test_publish_and_consume_delivery() {
-    let nats = common::TestNats::new().await;
-    setup_jetstream(&nats.js).await.unwrap();
-
-    let publisher = NatsPublisher::new(nats.js.clone(), nats.client.clone());
-
-    let msg = DeliveryDispatchMessage {
-        notification_id: Uuid::new_v4(),
-        delivery_attempt_id: Uuid::new_v4(),
-        channel: "email".into(),
-        recipient_user_id: "user-1".into(),
-    };
-
-    publisher.publish_delivery("email", &msg).await.unwrap();
-
-    let stream = nats.js.get_stream("DELIVERY").await.unwrap();
-    let consumer = stream
-        .get_consumer::<async_nats::jetstream::consumer::pull::Config>("delivery-email")
-        .await
-        .unwrap();
-
-    let mut messages = consumer.messages().await.unwrap();
-    let received = tokio::time::timeout(std::time::Duration::from_secs(5), messages.next())
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-
-    let decoded: DeliveryDispatchMessage = serde_json::from_slice(&received.payload).unwrap();
-    assert_eq!(decoded.notification_id, msg.notification_id);
-    assert_eq!(decoded.channel, "email");
+    assert_eq!(decoded.action_url, Some("https://example.com".into()));
+    assert_eq!(decoded.icon, Some("mail".into()));
 
     received.ack().await.unwrap();
 }
@@ -136,7 +100,9 @@ async fn test_realtime_pubsub() {
         metadata: None,
         old_state: None,
         new_state: None,
-        unread_count: None,
+        unseen_count: None,
+        action_url: None,
+        icon: None,
     };
 
     publisher.publish_realtime("user-1", &event).await.unwrap();
@@ -172,9 +138,11 @@ async fn test_state_change_pubsub() {
         payload: None,
         group_key: None,
         metadata: None,
-        old_state: Some("unread".into()),
-        new_state: Some("read".into()),
-        unread_count: None,
+        old_state: Some("unseen".into()),
+        new_state: Some("unread".into()),
+        unseen_count: None,
+        action_url: None,
+        icon: None,
     };
 
     publisher
@@ -188,53 +156,45 @@ async fn test_state_change_pubsub() {
         .unwrap();
 
     let decoded: RealtimeEvent = serde_json::from_slice(&received.payload).unwrap();
-    assert_eq!(decoded.old_state.as_deref(), Some("unread"));
-    assert_eq!(decoded.new_state.as_deref(), Some("read"));
+    assert_eq!(decoded.old_state.as_deref(), Some("unseen"));
+    assert_eq!(decoded.new_state.as_deref(), Some("unread"));
 }
 
 #[tokio::test]
-async fn test_delivery_channels_independent() {
+async fn test_unseen_count_update_pubsub() {
     let nats = common::TestNats::new().await;
-    setup_jetstream(&nats.js).await.unwrap();
 
     let publisher = NatsPublisher::new(nats.js.clone(), nats.client.clone());
 
-    // Publish to different channels
-    for channel in &["email", "push", "sms", "webhook"] {
-        publisher
-            .publish_delivery(
-                channel,
-                &DeliveryDispatchMessage {
-                    notification_id: Uuid::new_v4(),
-                    delivery_attempt_id: Uuid::new_v4(),
-                    channel: channel.to_string(),
-                    recipient_user_id: "user-1".into(),
-                },
-            )
-            .await
-            .unwrap();
-    }
+    let mut sub = nats
+        .client
+        .subscribe("rt.user.user-1")
+        .await
+        .unwrap();
 
-    // Each consumer should get exactly one message
-    let stream = nats.js.get_stream("DELIVERY").await.unwrap();
+    let event = RealtimeEvent {
+        event_type: RealtimeEventType::UnseenCountUpdate,
+        notification_id: Uuid::nil(),
+        service_slug: String::new(),
+        notification_type: String::new(),
+        level: None,
+        payload: None,
+        group_key: None,
+        metadata: None,
+        old_state: None,
+        new_state: None,
+        unseen_count: Some(5),
+        action_url: None,
+        icon: None,
+    };
 
-    for channel in &["email", "push", "sms", "webhook"] {
-        let consumer_name = format!("delivery-{channel}");
-        let consumer = stream
-            .get_consumer::<async_nats::jetstream::consumer::pull::Config>(&consumer_name)
-            .await
-            .unwrap();
+    publisher.publish_realtime("user-1", &event).await.unwrap();
 
-        let mut messages = consumer.messages().await.unwrap();
-        let received = tokio::time::timeout(std::time::Duration::from_secs(5), messages.next())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
+    let received = tokio::time::timeout(std::time::Duration::from_secs(5), sub.next())
+        .await
+        .unwrap()
+        .unwrap();
 
-        let decoded: DeliveryDispatchMessage =
-            serde_json::from_slice(&received.payload).unwrap();
-        assert_eq!(decoded.channel, *channel);
-        received.ack().await.unwrap();
-    }
+    let decoded: RealtimeEvent = serde_json::from_slice(&received.payload).unwrap();
+    assert_eq!(decoded.unseen_count, Some(5));
 }

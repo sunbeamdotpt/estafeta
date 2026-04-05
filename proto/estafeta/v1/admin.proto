@@ -28,8 +28,8 @@ service AdminService {
   // Get current global policy
   rpc GetGlobalPolicy(GetGlobalPolicyRequest) returns (GlobalPolicy);
 
-  // Replay a notification (re-trigger delivery)
-  rpc ReplayNotification(ReplayNotificationRequest) returns (google.protobuf.Empty);
+  // Re-surface a notification (trigger escalation manually)
+  rpc ResurfaceNotification(ResurfaceNotificationRequest) returns (google.protobuf.Empty);
 }
 
 message RegisterServiceRequest {
@@ -75,22 +75,20 @@ message SetGlobalPolicyRequest {
   int32 max_notifications_per_user_per_hour = 1;
   int32 max_ttl_seconds = 2;
   int32 max_escalations = 3;
-  repeated DeliveryChannel default_channels = 4;
-  int32 rate_limit_per_service_per_second = 5;
+  int32 rate_limit_per_service_per_second = 4;
 }
 
 message GlobalPolicy {
   int32 max_notifications_per_user_per_hour = 1;
   int32 max_ttl_seconds = 2;
   int32 max_escalations = 3;
-  repeated DeliveryChannel default_channels = 4;
-  int32 rate_limit_per_service_per_second = 5;
-  google.protobuf.Timestamp updated_at = 6;
+  int32 rate_limit_per_service_per_second = 4;
+  google.protobuf.Timestamp updated_at = 5;
 }
 
 message GetGlobalPolicyRequest {}
 
-message ReplayNotificationRequest {
+message ResurfaceNotificationRequest {
   string notification_id = 1;
-  repeated DeliveryChannel channels = 2;
+  EscalationAction action = 2;
 }

@@ -31,35 +31,5 @@ pub async fn setup_jetstream(js: &jetstream::Context) -> Result<()> {
         .await?;
     info!("JetStream consumer 'processor' ready");
 
-    // DELIVERY stream — outbound dispatch
-    let delivery_stream = js
-        .get_or_create_stream(stream::Config {
-            name: "DELIVERY".to_string(),
-            subjects: vec!["delivery.dispatch.>".to_string()],
-            retention: stream::RetentionPolicy::WorkQueue,
-            storage: stream::StorageType::File,
-            ..Default::default()
-        })
-        .await?;
-    info!(stream = "DELIVERY", "JetStream stream ready");
-
-    // Per-channel delivery consumers
-    for channel in &["email", "push", "sms", "webhook"] {
-        let name = format!("delivery-{channel}");
-        delivery_stream
-            .get_or_create_consumer(
-                &name,
-                jetstream::consumer::pull::Config {
-                    durable_name: Some(name.clone()),
-                    filter_subject: format!("delivery.dispatch.{channel}"),
-                    ack_wait: std::time::Duration::from_secs(60),
-                    max_deliver: 5,
-                    ..Default::default()
-                },
-            )
-            .await?;
-        info!(consumer = %name, "JetStream consumer ready");
-    }
-
     Ok(())
 }

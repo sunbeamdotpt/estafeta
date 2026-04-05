@@ -19,7 +19,10 @@ pub struct NotificationRow {
     pub expires_at: Option<DateTime<Utc>>,
     pub next_escalation_at: Option<DateTime<Utc>>,
     pub escalation_count: i32,
+    pub seen_at: Option<DateTime<Utc>>,
     pub read_at: Option<DateTime<Utc>>,
+    pub action_url: Option<String>,
+    pub icon: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -37,6 +40,8 @@ pub struct InsertNotification {
     pub metadata: serde_json::Value,
     pub expires_at: Option<DateTime<Utc>>,
     pub next_escalation_at: Option<DateTime<Utc>>,
+    pub action_url: Option<String>,
+    pub icon: Option<String>,
 }
 
 pub async fn insert_notification(
@@ -47,8 +52,9 @@ pub async fn insert_notification(
         r#"
         INSERT INTO notifications
             (id, service_id, notification_type_id, level_id, recipient_user_id,
-             state, payload, group_key, idempotency_key, metadata, expires_at, next_escalation_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             state, payload, group_key, idempotency_key, metadata, expires_at,
+             next_escalation_at, action_url, icon)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING *
         "#,
     )
@@ -64,6 +70,8 @@ pub async fn insert_notification(
     .bind(&n.metadata)
     .bind(n.expires_at)
     .bind(n.next_escalation_at)
+    .bind(&n.action_url)
+    .bind(&n.icon)
     .fetch_one(pool)
     .await
 }
@@ -111,6 +119,43 @@ pub async fn list_notifications(
     .await
 }
 
+pub async fn count_unseen(
+    pool: &PgPool,
+    user_id: &str,
+    service_ids: &[Uuid],
+) -> Result<i64, sqlx::Error> {
+    let row: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*) FROM notifications
+        WHERE recipient_user_id = $1
+          AND state = 'unseen'
+          AND ($2::uuid[] IS NULL OR service_id = ANY($2))
+        "#,
+    )
+    .bind(user_id)
+    .bind(if service_ids.is_empty() { None } else { Some(service_ids) })
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
+pub async fn count_unseen_by_service(
+    pool: &PgPool,
+    user_id: &str,
+) -> Result<Vec<(Uuid, i64)>, sqlx::Error> {
+    sqlx::query_as::<_, (Uuid, i64)>(
+        r#"
+        SELECT service_id, COUNT(*) as count
+        FROM notifications
+        WHERE recipient_user_id = $1 AND state = 'unseen'
+        GROUP BY service_id
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn count_unread(
     pool: &PgPool,
     user_id: &str,
@@ -129,6 +174,59 @@ pub async fn count_unread(
     .fetch_one(pool)
     .await?;
     Ok(row.0)
+}
+
+pub async fn count_unread_by_service(
+    pool: &PgPool,
+    user_id: &str,
+) -> Result<Vec<(Uuid, i64)>, sqlx::Error> {
+    sqlx::query_as::<_, (Uuid, i64)>(
+        r#"
+        SELECT service_id, COUNT(*) as count
+        FROM notifications
+        WHERE recipient_user_id = $1 AND state = 'unread'
+        GROUP BY service_id
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn mark_seen(
+    pool: &PgPool,
+    user_id: &str,
+    ids: &[Uuid],
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        UPDATE notifications
+        SET state = 'unread', seen_at = now(), updated_at = now()
+        WHERE recipient_user_id = $1 AND id = ANY($2) AND state = 'unseen'
+        "#,
+    )
+    .bind(user_id)
+    .bind(ids)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn mark_all_seen(
+    pool: &PgPool,
+    user_id: &str,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        UPDATE notifications
+        SET state = 'unread', seen_at = now(), updated_at = now()
+        WHERE recipient_user_id = $1 AND state = 'unseen'
+        "#,
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
 }
 
 pub async fn mark_read(
@@ -179,7 +277,7 @@ pub async fn snooze(
         r#"
         UPDATE notifications
         SET state = 'snoozed', snoozed_until = $3, updated_at = now()
-        WHERE recipient_user_id = $1 AND id = $2 AND state IN ('unread', 'read')
+        WHERE recipient_user_id = $1 AND id = $2 AND state IN ('unseen', 'unread', 'read')
         "#,
     )
     .bind(user_id)
@@ -200,7 +298,7 @@ pub async fn dismiss(
         UPDATE notifications
         SET state = 'dismissed', updated_at = now()
         WHERE recipient_user_id = $1 AND id = ANY($2)
-          AND state IN ('unread', 'read', 'snoozed')
+          AND state IN ('unseen', 'unread', 'read', 'snoozed')
         "#,
     )
     .bind(user_id)
@@ -210,8 +308,29 @@ pub async fn dismiss(
     Ok(result.rows_affected())
 }
 
+pub async fn dismiss_all_in_group(
+    pool: &PgPool,
+    user_id: &str,
+    service_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        UPDATE notifications
+        SET state = 'dismissed', updated_at = now()
+        WHERE recipient_user_id = $1 AND service_id = $2
+          AND state IN ('unseen', 'unread', 'read', 'snoozed')
+        "#,
+    )
+    .bind(user_id)
+    .bind(service_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 /// Wake snoozed notifications whose snooze time has passed.
 /// Returns IDs that were woken for real-time event publishing.
+/// Wakes to 'unread' since they were already seen before snoozing.
 pub async fn wake_snoozed(pool: &PgPool, batch_size: i64) -> Result<Vec<NotificationRow>, sqlx::Error> {
     sqlx::query_as::<_, NotificationRow>(
         r#"
@@ -240,7 +359,7 @@ pub async fn expire_notifications(pool: &PgPool, batch_size: i64) -> Result<Vec<
         SET state = 'expired', updated_at = now()
         WHERE id IN (
             SELECT id FROM notifications
-            WHERE expires_at <= now() AND state IN ('unread', 'read')
+            WHERE expires_at <= now() AND state IN ('unseen', 'unread', 'read')
             ORDER BY expires_at
             LIMIT $1
             FOR UPDATE SKIP LOCKED
@@ -258,7 +377,7 @@ pub async fn get_escalation_due(pool: &PgPool, batch_size: i64) -> Result<Vec<No
     sqlx::query_as::<_, NotificationRow>(
         r#"
         SELECT * FROM notifications
-        WHERE state = 'unread'
+        WHERE state IN ('unseen', 'unread')
           AND next_escalation_at IS NOT NULL
           AND next_escalation_at <= now()
         ORDER BY next_escalation_at
@@ -271,7 +390,7 @@ pub async fn get_escalation_due(pool: &PgPool, batch_size: i64) -> Result<Vec<No
     .await
 }
 
-/// Update escalation state after re-delivery.
+/// Update escalation state after escalation action.
 pub async fn update_escalation(
     pool: &PgPool,
     id: Uuid,
@@ -293,20 +412,38 @@ pub async fn update_escalation(
     Ok(())
 }
 
-/// Count unread grouped by service_id for a user.
-pub async fn count_unread_by_service(
+/// Resurface a notification by setting it back to unseen.
+pub async fn resurface_notification(
     pool: &PgPool,
-    user_id: &str,
-) -> Result<Vec<(Uuid, i64)>, sqlx::Error> {
-    sqlx::query_as::<_, (Uuid, i64)>(
+    id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
         r#"
-        SELECT service_id, COUNT(*) as count
-        FROM notifications
-        WHERE recipient_user_id = $1 AND state = 'unread'
-        GROUP BY service_id
+        UPDATE notifications
+        SET state = 'unseen', seen_at = NULL, updated_at = now()
+        WHERE id = $1
         "#,
     )
-    .bind(user_id)
-    .fetch_all(pool)
-    .await
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Bump a notification by updating its updated_at timestamp.
+pub async fn bump_notification(
+    pool: &PgPool,
+    id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE notifications
+        SET updated_at = now()
+        WHERE id = $1
+        "#,
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }

@@ -35,22 +35,20 @@ fn to_timestamp(dt: chrono::DateTime<chrono::Utc>) -> Option<Timestamp> {
     })
 }
 
-fn channel_from_proto(ch: i32) -> String {
-    match ch {
-        1 => "email".into(),
-        2 => "push".into(),
-        3 => "sms".into(),
-        4 => "webhook".into(),
-        _ => "email".into(),
+fn escalation_action_from_proto(v: i32) -> &'static str {
+    match v {
+        1 => "resurface",
+        2 => "bump",
+        3 => "elevate",
+        _ => "resurface",
     }
 }
 
-fn channel_to_proto(ch: &str) -> i32 {
-    match ch {
-        "email" => 1,
-        "push" => 2,
-        "sms" => 3,
-        "webhook" => 4,
+fn escalation_action_to_proto(s: &str) -> i32 {
+    match s {
+        "resurface" => 1,
+        "bump" => 2,
+        "elevate" => 3,
         _ => 0,
     }
 }
@@ -81,7 +79,7 @@ impl SchemaRegistryServiceTrait for SchemaRegistryServiceImpl {
             return Err(Status::invalid_argument("invalid JSON schema"));
         }
 
-        let channels: Vec<String> = req.default_channels.iter().map(|c| channel_from_proto(*c)).collect();
+        let escalation_action = escalation_action_from_proto(req.escalation_action);
 
         let row = db::schemas::insert_notification_type(
             &self.pool,
@@ -90,10 +88,11 @@ impl SchemaRegistryServiceTrait for SchemaRegistryServiceImpl {
             &req.display_name,
             if req.description.is_empty() { None } else { Some(&req.description) },
             &schema_value,
-            &channels,
             if req.default_ttl_seconds > 0 { Some(req.default_ttl_seconds) } else { None },
             if req.escalation_interval_seconds > 0 { Some(req.escalation_interval_seconds) } else { None },
             req.max_escalations,
+            escalation_action,
+            if req.default_icon.is_empty() { None } else { Some(&req.default_icon) },
         )
         .await
         .map_err(|e| Status::internal(format!("db error: {e}")))?;
@@ -124,7 +123,7 @@ impl SchemaRegistryServiceTrait for SchemaRegistryServiceImpl {
             .map(|s| proto_convert::proto_struct_to_value(s))
             .unwrap_or(serde_json::json!({"type": "object"}));
 
-        let channels: Vec<String> = req.default_channels.iter().map(|c| channel_from_proto(*c)).collect();
+        let escalation_action = escalation_action_from_proto(req.escalation_action);
 
         let row = db::schemas::update_notification_type(
             &self.pool,
@@ -133,10 +132,11 @@ impl SchemaRegistryServiceTrait for SchemaRegistryServiceImpl {
             &req.display_name,
             if req.description.is_empty() { None } else { Some(&req.description) },
             &schema_value,
-            &channels,
             if req.default_ttl_seconds > 0 { Some(req.default_ttl_seconds) } else { None },
             if req.escalation_interval_seconds > 0 { Some(req.escalation_interval_seconds) } else { None },
             req.max_escalations,
+            escalation_action,
+            if req.default_icon.is_empty() { None } else { Some(&req.default_icon) },
             req.enabled,
         )
         .await
@@ -343,11 +343,12 @@ fn row_to_proto(
         display_name: row.display_name.clone(),
         description: row.description.clone().unwrap_or_default(),
         json_schema: proto_convert::value_to_proto_struct(&row.json_schema),
-        default_channels: row.default_channels.iter().map(|c| channel_to_proto(c)).collect(),
         default_ttl_seconds: row.default_ttl_seconds.unwrap_or(0),
         escalation_interval_seconds: row.escalation_interval_seconds.unwrap_or(0),
         max_escalations: row.max_escalations,
+        escalation_action: escalation_action_to_proto(&row.escalation_action),
         enabled: row.enabled,
+        default_icon: row.default_icon.clone().unwrap_or_default(),
         created_at: to_timestamp(row.created_at),
         updated_at: to_timestamp(row.updated_at),
     }

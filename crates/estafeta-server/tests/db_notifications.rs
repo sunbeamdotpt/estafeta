@@ -16,10 +16,11 @@ async fn setup_service_and_type(pool: &sqlx::PgPool) -> (Uuid, Uuid) {
         "Alert",
         None,
         &json!({"type": "object"}),
-        &[],
         None,
         None,
         0,
+        "resurface",
+        None,
     )
     .await
     .unwrap();
@@ -39,20 +40,24 @@ async fn test_insert_and_get_notification() {
             notification_type_id: type_id,
             level_id: None,
             recipient_user_id: "user-1".into(),
-            state: "unread".into(),
+            state: "unseen".into(),
             payload: json!({"title": "Hello"}),
             group_key: Some("grp-1".into()),
             idempotency_key: Some("idem-1".into()),
             metadata: json!({"source": "test"}),
             expires_at: None,
             next_escalation_at: None,
+            action_url: Some("https://example.com/action".into()),
+            icon: Some("mail".into()),
         },
     )
     .await
     .unwrap();
 
-    assert_eq!(notif.state, "unread");
+    assert_eq!(notif.state, "unseen");
     assert_eq!(notif.recipient_user_id, "user-1");
+    assert_eq!(notif.action_url.as_deref(), Some("https://example.com/action"));
+    assert_eq!(notif.icon.as_deref(), Some("mail"));
 
     let fetched = notifications::get_notification(&db.pool, notif.id)
         .await
@@ -73,13 +78,15 @@ async fn test_idempotency_key_dedup() {
         notification_type_id: type_id,
         level_id: None,
         recipient_user_id: "user-1".into(),
-        state: "unread".into(),
+        state: "unseen".into(),
         payload: json!({}),
         group_key: None,
         idempotency_key: Some("unique-key".into()),
         metadata: json!({}),
         expires_at: None,
         next_escalation_at: None,
+        action_url: None,
+        icon: None,
     };
 
     notifications::insert_notification(&db.pool, &insert)
@@ -106,13 +113,15 @@ async fn test_list_notifications_with_filters() {
                 notification_type_id: type_id,
                 level_id: None,
                 recipient_user_id: "user-1".into(),
-                state: if i < 3 { "unread" } else { "read" }.into(),
+                state: if i < 3 { "unseen" } else { "read" }.into(),
                 payload: json!({}),
                 group_key: if i == 0 { Some("grp".into()) } else { None },
                 idempotency_key: None,
                 metadata: json!({}),
                 expires_at: None,
                 next_escalation_at: None,
+                action_url: None,
+                icon: None,
             },
         )
         .await
@@ -126,10 +135,10 @@ async fn test_list_notifications_with_filters() {
     assert_eq!(all.len(), 5);
 
     // Filter by state
-    let unread = notifications::list_notifications(
+    let unseen = notifications::list_notifications(
         &db.pool,
         "user-1",
-        &["unread".into()],
+        &["unseen".into()],
         &[],
         &[],
         None,
@@ -138,7 +147,7 @@ async fn test_list_notifications_with_filters() {
     )
     .await
     .unwrap();
-    assert_eq!(unread.len(), 3);
+    assert_eq!(unseen.len(), 3);
 
     // Filter by group_key
     let grouped = notifications::list_notifications(
@@ -163,6 +172,88 @@ async fn test_list_notifications_with_filters() {
 }
 
 #[tokio::test]
+async fn test_mark_seen() {
+    let db = common::TestDb::new().await;
+    let (svc_id, type_id) = setup_service_and_type(&db.pool).await;
+
+    let notif = notifications::insert_notification(
+        &db.pool,
+        &notifications::InsertNotification {
+            id: Uuid::new_v4(),
+            service_id: svc_id,
+            notification_type_id: type_id,
+            level_id: None,
+            recipient_user_id: "user-1".into(),
+            state: "unseen".into(),
+            payload: json!({}),
+            group_key: None,
+            idempotency_key: None,
+            metadata: json!({}),
+            expires_at: None,
+            next_escalation_at: None,
+            action_url: None,
+            icon: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Mark seen
+    let affected = notifications::mark_seen(&db.pool, "user-1", &[notif.id])
+        .await
+        .unwrap();
+    assert_eq!(affected, 1);
+
+    let fetched = notifications::get_notification(&db.pool, notif.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.state, "unread");
+    assert!(fetched.seen_at.is_some());
+}
+
+#[tokio::test]
+async fn test_mark_all_seen() {
+    let db = common::TestDb::new().await;
+    let (svc_id, type_id) = setup_service_and_type(&db.pool).await;
+
+    for _ in 0..3 {
+        notifications::insert_notification(
+            &db.pool,
+            &notifications::InsertNotification {
+                id: Uuid::new_v4(),
+                service_id: svc_id,
+                notification_type_id: type_id,
+                level_id: None,
+                recipient_user_id: "user-1".into(),
+                state: "unseen".into(),
+                payload: json!({}),
+                group_key: None,
+                idempotency_key: None,
+                metadata: json!({}),
+                expires_at: None,
+                next_escalation_at: None,
+                action_url: None,
+                icon: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let affected = notifications::mark_all_seen(&db.pool, "user-1")
+        .await
+        .unwrap();
+    assert_eq!(affected, 3);
+
+    // All should now be unread (seen)
+    let unseen = notifications::count_unseen(&db.pool, "user-1", &[])
+        .await
+        .unwrap();
+    assert_eq!(unseen, 0);
+}
+
+#[tokio::test]
 async fn test_mark_read_unread() {
     let db = common::TestDb::new().await;
     let (svc_id, type_id) = setup_service_and_type(&db.pool).await;
@@ -175,19 +266,26 @@ async fn test_mark_read_unread() {
             notification_type_id: type_id,
             level_id: None,
             recipient_user_id: "user-1".into(),
-            state: "unread".into(),
+            state: "unseen".into(),
             payload: json!({}),
             group_key: None,
             idempotency_key: None,
             metadata: json!({}),
             expires_at: None,
             next_escalation_at: None,
+            action_url: None,
+            icon: None,
         },
     )
     .await
     .unwrap();
 
-    // Mark read
+    // First mark seen (unseen → unread)
+    notifications::mark_seen(&db.pool, "user-1", &[notif.id])
+        .await
+        .unwrap();
+
+    // Now mark read (unread → read)
     let affected = notifications::mark_read(&db.pool, "user-1", &[notif.id])
         .await
         .unwrap();
@@ -227,13 +325,15 @@ async fn test_snooze_and_wake() {
             notification_type_id: type_id,
             level_id: None,
             recipient_user_id: "user-1".into(),
-            state: "unread".into(),
+            state: "unseen".into(),
             payload: json!({}),
             group_key: None,
             idempotency_key: None,
             metadata: json!({}),
             expires_at: None,
             next_escalation_at: None,
+            action_url: None,
+            icon: None,
         },
     )
     .await
@@ -276,13 +376,15 @@ async fn test_dismiss() {
             notification_type_id: type_id,
             level_id: None,
             recipient_user_id: "user-1".into(),
-            state: "unread".into(),
+            state: "unseen".into(),
             payload: json!({}),
             group_key: None,
             idempotency_key: None,
             metadata: json!({}),
             expires_at: None,
             next_escalation_at: None,
+            action_url: None,
+            icon: None,
         },
     )
     .await
@@ -307,6 +409,66 @@ async fn test_dismiss() {
 }
 
 #[tokio::test]
+async fn test_dismiss_all_in_group() {
+    let db = common::TestDb::new().await;
+    let (svc_id, type_id) = setup_service_and_type(&db.pool).await;
+
+    // Insert 3 notifications in same group
+    for _ in 0..3 {
+        notifications::insert_notification(
+            &db.pool,
+            &notifications::InsertNotification {
+                id: Uuid::new_v4(),
+                service_id: svc_id,
+                notification_type_id: type_id,
+                level_id: None,
+                recipient_user_id: "user-1".into(),
+                state: "unseen".into(),
+                payload: json!({}),
+                group_key: Some("test-group".into()),
+                idempotency_key: None,
+                metadata: json!({}),
+                expires_at: None,
+                next_escalation_at: None,
+                action_url: None,
+                icon: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    // Insert 1 notification in a different group
+    notifications::insert_notification(
+        &db.pool,
+        &notifications::InsertNotification {
+            id: Uuid::new_v4(),
+            service_id: svc_id,
+            notification_type_id: type_id,
+            level_id: None,
+            recipient_user_id: "user-1".into(),
+            state: "unseen".into(),
+            payload: json!({}),
+            group_key: Some("other-group".into()),
+            idempotency_key: None,
+            metadata: json!({}),
+            expires_at: None,
+            next_escalation_at: None,
+            action_url: None,
+            icon: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let dismissed = notifications::dismiss_all_in_group(&db.pool, "user-1", svc_id)
+        .await
+        .unwrap();
+    // Should dismiss all 4 notifications belonging to this service for the user
+    assert_eq!(dismissed, 4);
+}
+
+#[tokio::test]
 async fn test_expire_notifications() {
     let db = common::TestDb::new().await;
     let (svc_id, type_id) = setup_service_and_type(&db.pool).await;
@@ -321,13 +483,15 @@ async fn test_expire_notifications() {
             notification_type_id: type_id,
             level_id: None,
             recipient_user_id: "user-1".into(),
-            state: "unread".into(),
+            state: "unseen".into(),
             payload: json!({}),
             group_key: None,
             idempotency_key: None,
             metadata: json!({}),
             expires_at: Some(past),
             next_escalation_at: None,
+            action_url: None,
+            icon: None,
         },
     )
     .await
@@ -338,6 +502,53 @@ async fn test_expire_notifications() {
         .unwrap();
     assert_eq!(expired.len(), 1);
     assert_eq!(expired[0].state, "expired");
+}
+
+#[tokio::test]
+async fn test_unseen_count() {
+    let db = common::TestDb::new().await;
+    let (svc_id, type_id) = setup_service_and_type(&db.pool).await;
+
+    for _ in 0..3 {
+        notifications::insert_notification(
+            &db.pool,
+            &notifications::InsertNotification {
+                id: Uuid::new_v4(),
+                service_id: svc_id,
+                notification_type_id: type_id,
+                level_id: None,
+                recipient_user_id: "user-1".into(),
+                state: "unseen".into(),
+                payload: json!({}),
+                group_key: None,
+                idempotency_key: None,
+                metadata: json!({}),
+                expires_at: None,
+                next_escalation_at: None,
+                action_url: None,
+                icon: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let count = notifications::count_unseen(&db.pool, "user-1", &[])
+        .await
+        .unwrap();
+    assert_eq!(count, 3);
+
+    let by_svc = notifications::count_unseen_by_service(&db.pool, "user-1")
+        .await
+        .unwrap();
+    assert_eq!(by_svc.len(), 1);
+    assert_eq!(by_svc[0].1, 3);
+
+    // Different user has 0
+    let count = notifications::count_unseen(&db.pool, "user-2", &[])
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
 }
 
 #[tokio::test]
@@ -361,6 +572,8 @@ async fn test_unread_count() {
                 metadata: json!({}),
                 expires_at: None,
                 next_escalation_at: None,
+                action_url: None,
+                icon: None,
             },
         )
         .await
@@ -400,13 +613,15 @@ async fn test_escalation_due() {
             notification_type_id: type_id,
             level_id: None,
             recipient_user_id: "user-1".into(),
-            state: "unread".into(),
+            state: "unseen".into(),
             payload: json!({}),
             group_key: None,
             idempotency_key: None,
             metadata: json!({}),
             expires_at: None,
             next_escalation_at: Some(past),
+            action_url: None,
+            icon: None,
         },
     )
     .await

@@ -16,10 +16,11 @@ pub struct CachedNotificationType {
     pub service_id: Uuid,
     pub type_key: String,
     pub json_schema: serde_json::Value,
-    pub default_channels: Vec<String>,
     pub default_ttl_seconds: Option<i32>,
     pub escalation_interval_seconds: Option<i32>,
     pub max_escalations: i32,
+    pub escalation_action: String,
+    pub default_icon: Option<String>,
     pub enabled: bool,
 }
 
@@ -47,7 +48,6 @@ pub struct CachedServicePref {
     pub enabled: bool,
     /// Notifications below this severity are suppressed.
     pub min_severity: Option<i32>,
-    pub channels: Vec<String>,
 }
 
 /// A user's notification preferences for a specific notification type.
@@ -55,8 +55,6 @@ pub struct CachedServicePref {
 pub struct CachedTypePref {
     pub notification_type_id: Uuid,
     pub enabled: bool,
-    /// Channel overrides; `None` means fall through to service/global defaults.
-    pub channels: Option<Vec<String>>,
 }
 
 /// A user-defined mute rule that suppresses matching notifications.
@@ -142,10 +140,11 @@ mod tests {
             service_id: uuid::Uuid::new_v4(),
             type_key: "test-type".into(),
             json_schema: serde_json::json!({"type": "object"}),
-            default_channels: vec!["email".into()],
             default_ttl_seconds: Some(3600),
             escalation_interval_seconds: None,
             max_escalations: 0,
+            escalation_action: "resurface".into(),
+            default_icon: None,
             enabled: true,
         });
 
@@ -171,10 +170,11 @@ mod tests {
             service_id: uuid::Uuid::new_v4(),
             type_key: "type".into(),
             json_schema: serde_json::json!({}),
-            default_channels: vec![],
             default_ttl_seconds: None,
             escalation_interval_seconds: None,
             max_escalations: 0,
+            escalation_action: "resurface".into(),
+            default_icon: None,
             enabled: true,
         });
 

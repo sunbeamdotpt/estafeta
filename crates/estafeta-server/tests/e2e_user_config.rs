@@ -31,10 +31,11 @@ async fn setup_svc(env: &mut common::TestEnv, slug: &str) {
             display_name: "Notification".into(),
             description: String::new(),
             json_schema: Some(simple_schema()),
-            default_channels: vec![DeliveryChannel::Email as i32],
             default_ttl_seconds: 0,
             escalation_interval_seconds: 0,
             max_escalations: 0,
+            escalation_action: EscalationAction::Unspecified as i32,
+            default_icon: String::new(),
         })
         .await
         .unwrap();
@@ -45,24 +46,22 @@ async fn test_full_preferences_with_service_and_type() {
     let mut env = common::TestEnv::new().await;
     setup_svc(&mut env, "pref-svc").await;
 
-    // Set service pref
+    // Set service pref (no channels)
     env.user_config_client
         .set_service_preference(SetServicePreferenceRequest {
             service_slug: "pref-svc".into(),
             enabled: true,
             min_severity: 3,
-            channels: vec![DeliveryChannel::Email as i32],
         })
         .await
         .unwrap();
 
-    // Set type pref
+    // Set type pref (no channels)
     env.user_config_client
         .set_type_preference(SetTypePreferenceRequest {
             service_slug: "pref-svc".into(),
             type_key: "notif".into(),
             enabled: true,
-            channels: vec![DeliveryChannel::Push as i32],
         })
         .await
         .unwrap();
@@ -109,101 +108,38 @@ async fn test_full_preferences_with_service_and_type() {
 }
 
 #[tokio::test]
-async fn test_channel_config_partial_update() {
+async fn test_preferences_catch_up_and_sort_mode() {
     let mut env = common::TestEnv::new().await;
 
-    // Set email only
-    env.user_config_client
-        .update_channel_config(UpdateChannelConfigRequest {
-            email_address: "first@example.com".into(),
-            phone_number: String::new(),
-            webhook_url: String::new(),
-            webhook_secret: String::new(),
-        })
-        .await
-        .unwrap();
-
-    // Get — should have email
-    let config = env
+    // Get defaults
+    let prefs = env
         .user_config_client
-        .get_channel_config(GetChannelConfigRequest {})
+        .get_preferences(GetPreferencesRequest {})
         .await
         .unwrap()
         .into_inner();
-    assert_eq!(config.email_address, "first@example.com");
 
-    // Update phone only — email should be preserved
+    assert!(prefs.global_enabled);
+
+    // Update with catch_up_mode and sort_mode
     env.user_config_client
-        .update_channel_config(UpdateChannelConfigRequest {
-            email_address: String::new(),
-            phone_number: "+1555000".into(),
-            webhook_url: String::new(),
-            webhook_secret: String::new(),
+        .update_preferences(UpdatePreferencesRequest {
+            global_enabled: true,
+            catch_up_mode: "all_unseen".into(),
+            sort_mode: "priority".into(),
         })
         .await
         .unwrap();
 
-    let config = env
+    let prefs = env
         .user_config_client
-        .get_channel_config(GetChannelConfigRequest {})
+        .get_preferences(GetPreferencesRequest {})
         .await
         .unwrap()
         .into_inner();
-    assert_eq!(config.email_address, "first@example.com");
-    assert_eq!(config.phone_number, "+1555000");
-}
 
-#[tokio::test]
-async fn test_multiple_devices() {
-    let mut env = common::TestEnv::new().await;
-
-    // Register two devices
-    env.user_config_client
-        .register_device(RegisterDeviceRequest {
-            device_id: "phone-1".into(),
-            platform: "ios".into(),
-            push_token: "token-ios-1".into(),
-        })
-        .await
-        .unwrap();
-
-    env.user_config_client
-        .register_device(RegisterDeviceRequest {
-            device_id: "phone-2".into(),
-            platform: "android".into(),
-            push_token: "token-android-1".into(),
-        })
-        .await
-        .unwrap();
-
-    // Update token for first device
-    let updated = env
-        .user_config_client
-        .register_device(RegisterDeviceRequest {
-            device_id: "phone-1".into(),
-            platform: "ios".into(),
-            push_token: "token-ios-2".into(),
-        })
-        .await
-        .unwrap()
-        .into_inner();
-    assert_eq!(updated.push_token, "token-ios-2");
-
-    // Unregister first device
-    env.user_config_client
-        .unregister_device(UnregisterDeviceRequest {
-            device_id: "phone-1".into(),
-        })
-        .await
-        .unwrap();
-
-    // Unregister second device
-    env.user_config_client
-        .unregister_device(UnregisterDeviceRequest {
-            device_id: "phone-2".into(),
-        })
-        .await
-        .unwrap();
+    assert_eq!(prefs.catch_up_mode, "all_unseen");
+    assert_eq!(prefs.sort_mode, "priority");
 }
 
 #[tokio::test]
@@ -298,27 +234,9 @@ async fn test_service_preference_nonexistent_service() {
             service_slug: "nope".into(),
             enabled: true,
             min_severity: 0,
-            channels: vec![],
         })
         .await;
 
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
-}
-
-#[tokio::test]
-async fn test_channel_config_get_before_set() {
-    let mut env = common::TestEnv::new().await;
-
-    // Getting channel config before any was set should return defaults
-    let config = env
-        .user_config_client
-        .get_channel_config(GetChannelConfigRequest {})
-        .await
-        .unwrap()
-        .into_inner();
-
-    assert!(config.email_address.is_empty());
-    assert!(config.phone_number.is_empty());
-    assert!(!config.webhook_secret_set);
 }

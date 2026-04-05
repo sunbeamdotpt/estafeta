@@ -28,19 +28,21 @@ async fn test_notification_type_crud() {
         "Welcome Email",
         Some("Sent on signup"),
         &schema,
-        &["email".to_string()],
         Some(3600),
         Some(600),
         3,
+        "resurface",
+        Some("mail"),
     )
     .await
     .unwrap();
 
     assert_eq!(nt.type_key, "welcome");
     assert_eq!(nt.display_name, "Welcome Email");
-    assert_eq!(nt.default_channels, vec!["email"]);
     assert_eq!(nt.default_ttl_seconds, Some(3600));
     assert_eq!(nt.max_escalations, 3);
+    assert_eq!(nt.escalation_action, "resurface");
+    assert_eq!(nt.default_icon.as_deref(), Some("mail"));
 
     // Get
     let fetched = schemas::get_notification_type(&db.pool, svc.id, "welcome")
@@ -58,17 +60,19 @@ async fn test_notification_type_crud() {
         "Welcome V2",
         None,
         &json!({"type": "object"}),
-        &["email".to_string(), "push".to_string()],
         Some(7200),
         None,
         5,
+        "bump",
+        Some("send"),
         true,
     )
     .await
     .unwrap();
     assert_eq!(updated.display_name, "Welcome V2");
-    assert_eq!(updated.default_channels, vec!["email", "push"]);
     assert_eq!(updated.max_escalations, 5);
+    assert_eq!(updated.escalation_action, "bump");
+    assert_eq!(updated.default_icon.as_deref(), Some("send"));
 
     // List
     let list = schemas::list_notification_types(&db.pool, svc.id, 10, 0)
@@ -92,10 +96,11 @@ async fn test_notification_type_unique_constraint() {
         "Type 1",
         None,
         &json!({}),
-        &[],
         None,
         None,
         0,
+        "resurface",
+        None,
     )
     .await
     .unwrap();
@@ -107,10 +112,11 @@ async fn test_notification_type_unique_constraint() {
         "Duplicate",
         None,
         &json!({}),
-        &[],
         None,
         None,
         0,
+        "resurface",
+        None,
     )
     .await;
     assert!(result.is_err());
