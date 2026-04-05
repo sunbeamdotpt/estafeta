@@ -1,0 +1,180 @@
+syntax = "proto3";
+
+package estafeta.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "estafeta/v1/common.proto";
+
+service NotificationService {
+  // Send a notification from a producer service
+  rpc SendNotification(SendNotificationRequest) returns (SendNotificationResponse);
+
+  // Send a batch of notifications
+  rpc SendNotificationBatch(SendNotificationBatchRequest) returns (SendNotificationBatchResponse);
+
+  // Get a single notification by ID
+  rpc GetNotification(GetNotificationRequest) returns (Notification);
+
+  // List notifications for a user with filters
+  rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse);
+
+  // Mark notifications as seen (called when the dropdown opens)
+  rpc MarkSeen(MarkSeenRequest) returns (MarkSeenResponse);
+
+  // Mark one or more notifications as read
+  rpc MarkRead(MarkReadRequest) returns (google.protobuf.Empty);
+
+  // Mark one or more notifications as unread
+  rpc MarkUnread(MarkUnreadRequest) returns (google.protobuf.Empty);
+
+  // Snooze a notification until a given time
+  rpc Snooze(SnoozeRequest) returns (google.protobuf.Empty);
+
+  // Archive one or more notifications
+  rpc Archive(ArchiveRequest) returns (google.protobuf.Empty);
+
+  // Unarchive one or more notifications (archived -> read)
+  rpc Unarchive(UnarchiveRequest) returns (google.protobuf.Empty);
+
+  // Archive all notifications in a service group
+  rpc ArchiveAllInGroup(ArchiveAllInGroupRequest) returns (ArchiveAllInGroupResponse);
+
+  // Mark notifications as read on behalf of a user (producer/service call)
+  rpc ProducerMarkRead(ProducerMarkReadRequest) returns (google.protobuf.Empty);
+
+  // Get the unseen count (drives the bell badge)
+  rpc GetUnseenCount(GetUnseenCountRequest) returns (UnseenCountResponse);
+
+  // Get unread count, optionally filtered
+  rpc GetUnreadCount(GetUnreadCountRequest) returns (UnreadCountResponse);
+}
+
+message SendNotificationRequest {
+  string service_slug = 1;
+  string notification_type = 2;
+  string recipient_user_id = 3;
+  string level = 4;
+  google.protobuf.Struct payload = 5;
+  string idempotency_key = 6;
+  string group_key = 7;
+  int32 ttl_seconds = 8;
+  map<string, string> metadata = 9;
+  // URL to navigate to when the notification is clicked
+  string action_url = 10;
+  // Material Symbol icon name for display
+  string icon = 11;
+}
+
+message SendNotificationResponse {
+  string notification_id = 1;
+}
+
+message SendNotificationBatchRequest {
+  repeated SendNotificationRequest notifications = 1;
+}
+
+message SendNotificationBatchResponse {
+  repeated SendNotificationResponse results = 1;
+  int32 failed_count = 2;
+}
+
+message GetNotificationRequest {
+  string notification_id = 1;
+}
+
+message Notification {
+  string id = 1;
+  string service_slug = 2;
+  string notification_type = 3;
+  string level = 4;
+  NotificationState state = 5;
+  google.protobuf.Struct payload = 6;
+  string group_key = 7;
+  map<string, string> metadata = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp seen_at = 10;
+  google.protobuf.Timestamp read_at = 11;
+  google.protobuf.Timestamp snoozed_until = 12;
+  google.protobuf.Timestamp expires_at = 13;
+  int32 escalation_count = 14;
+  string recipient_user_id = 15;
+  string action_url = 16;
+  string icon = 17;
+}
+
+message ListNotificationsRequest {
+  repeated NotificationState states = 1;
+  repeated string service_slugs = 2;
+  repeated string notification_types = 3;
+  string group_key = 4;
+  Pagination pagination = 5;
+}
+
+message ListNotificationsResponse {
+  repeated Notification notifications = 1;
+  PaginatedResponse pagination = 2;
+}
+
+message MarkSeenRequest {
+  // If empty, marks all unseen as seen
+  repeated string notification_ids = 1;
+}
+
+message MarkSeenResponse {
+  int64 marked_count = 1;
+}
+
+message MarkReadRequest {
+  repeated string notification_ids = 1;
+}
+
+message MarkUnreadRequest {
+  repeated string notification_ids = 1;
+}
+
+message SnoozeRequest {
+  string notification_id = 1;
+  google.protobuf.Timestamp snooze_until = 2;
+}
+
+message ArchiveRequest {
+  repeated string notification_ids = 1;
+}
+
+message UnarchiveRequest {
+  repeated string notification_ids = 1;
+}
+
+message ArchiveAllInGroupRequest {
+  string service_slug = 1;
+}
+
+message ArchiveAllInGroupResponse {
+  int64 archived_count = 1;
+}
+
+message ProducerMarkReadRequest {
+  string service_slug = 1;
+  repeated string notification_ids = 2;
+  string recipient_user_id = 3;
+}
+
+message GetUnseenCountRequest {
+  repeated string service_slugs = 1;
+}
+
+message UnseenCountResponse {
+  int64 total_count = 1;
+  map<string, int64> count_by_service = 2;
+}
+
+message GetUnreadCountRequest {
+  repeated string service_slugs = 1;
+}
+
+message UnreadCountResponse {
+  int64 total_count = 1;
+  map<string, int64> count_by_service = 2;
+}

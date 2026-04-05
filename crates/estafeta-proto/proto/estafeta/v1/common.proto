@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package estafeta.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Pagination request parameters
+message Pagination {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+// Pagination response metadata
+message PaginatedResponse {
+  string next_page_token = 1;
+  int64 total_count = 2;
+}
+
+// Notification lifecycle state
+enum NotificationState {
+  NOTIFICATION_STATE_UNSPECIFIED = 0;
+  NOTIFICATION_STATE_UNSEEN = 1;
+  NOTIFICATION_STATE_UNREAD = 2;
+  NOTIFICATION_STATE_READ = 3;
+  NOTIFICATION_STATE_SNOOZED = 4;
+  NOTIFICATION_STATE_ARCHIVED = 5;
+  NOTIFICATION_STATE_EXPIRED = 6;
+}
+
+// Escalation behavior when a notification is re-surfaced
+enum EscalationAction {
+  ESCALATION_ACTION_UNSPECIFIED = 0;
+  // Move the notification back to unseen (re-triggers bell badge)
+  ESCALATION_ACTION_RESURFACE = 1;
+  // Bump the notification to the top of the list by updating its timestamp
+  ESCALATION_ACTION_BUMP = 2;
+  // Elevate the notification to a higher visual priority level
+  ESCALATION_ACTION_ELEVATE = 3;
+}

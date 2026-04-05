@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package estafeta.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "estafeta/v1/common.proto";
+
+service StreamingService {
+  // Subscribe to real-time notification events
+  rpc Subscribe(SubscribeRequest) returns (stream NotificationEvent);
+}
+
+message SubscribeRequest {
+  // Filter to specific services (empty = all)
+  repeated string service_slugs = 1;
+  // Include state change events (read, archived, etc.)
+  bool include_state_changes = 2;
+}
+
+message NotificationEvent {
+  oneof event {
+    NewNotification new_notification = 1;
+    StateChange state_change = 2;
+    UnseenCountUpdate unseen_count_update = 3;
+  }
+}
+
+message NewNotification {
+  string id = 1;
+  string service_slug = 2;
+  string notification_type = 3;
+  string level = 4;
+  google.protobuf.Struct payload = 5;
+  string group_key = 6;
+  map<string, string> metadata = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp expires_at = 9;
+  string action_url = 10;
+  string icon = 11;
+}
+
+message StateChange {
+  string notification_id = 1;
+  NotificationState old_state = 2;
+  NotificationState new_state = 3;
+  google.protobuf.Timestamp changed_at = 4;
+}
+
+message UnseenCountUpdate {
+  int64 total_count = 1;
+  map<string, int64> count_by_service = 2;
+}
