@@ -1,5 +1,7 @@
 # Estafeta
 
+> *Tem uma carta para si.*
+
 A unified platform notification service. Estafeta consolidates notifications from
 dozens of systems — email, codes, messages, calendar, and more — into a single
 gRPC-based Rust service backed by NATS JetStream and PostgreSQL.
@@ -10,21 +12,15 @@ application in your platform.
 
 ## Architecture
 
-```
-Producers ──gRPC──▶ Estafeta ──▶ NATS JetStream (durable ingestion)
-                                        │
-                         ┌──────────────┴──────────────┐
-                         ▼                              ▼
-                  Processor Consumer              Delivery Consumers
-                  (persist to PG,                 (email, push, sms,
-                   resolve prefs,                  webhook — one per
-                   fan-out to NATS Core)           channel)
-                         │
-                         ▼
-                  NATS Core rt.user.{uid}
-                         │
-                         ▼
-                  gRPC Server-Stream ──▶ Connected Clients
+```mermaid
+graph LR
+    Producers -->|gRPC| Estafeta
+    Estafeta -->|publish| JS[NATS JetStream]
+    JS --> Processor[Processor Consumer<br>persist to PG,<br>resolve prefs,<br>fan-out to NATS Core]
+    JS --> Delivery[Delivery Consumers<br>email, push, sms,<br>webhook]
+    Processor --> NC[NATS Core<br>rt.user.uid]
+    NC --> Stream[gRPC Server-Stream]
+    Stream --> Clients[Connected Clients]
 ```
 
 All Estafeta instances are **stateless**. Multiple instances form JetStream pull

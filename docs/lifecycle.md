@@ -7,31 +7,20 @@ state machine is implemented in `lifecycle/state_machine.rs` and enforced both i
 Rust (via the `NotificationState::apply` method) and at the database level (via a
 CHECK constraint and conditional UPDATE WHERE clauses).
 
-```
-                          +------------------+
-                          |                  |
-            +------------>|     Unread       |<-----------+
-            |             |                  |            |
-            |             +--+----+-----+----+            |
-            |                |    |     |                  |
-            |     MarkRead   |    |     |  Snooze          |  Wake
-            |                v    |     v                  |
-            |         +------+    |  +--------+           |
-            |         |           |  |        |-----------+
-            |         | Read      |  |Snoozed |
-            |         |           |  |        |--+
-            |         +---+--+----+  +---+----+  |
-            |             |  |           |       |
-            |  MarkUnread |  |           |       |
-            +-------------+  |           |       |
-                             |  Dismiss  |Expire |Expire
-                      Dismiss|           |       |
-                             v           v       |
-                      +------+-----+  +--+------+|
-                      |            |  |          ||
-                      | Dismissed  |  | Expired  |+
-                      | (terminal) |  | (terminal)|
-                      +------------+  +-----------+
+```mermaid
+stateDiagram-v2
+    [*] --> Unread
+    Unread --> Read : MarkRead
+    Unread --> Snoozed : Snooze
+    Unread --> Dismissed : Dismiss
+    Unread --> Expired : Expire
+
+    Read --> Unread : MarkUnread
+    Read --> Dismissed : Dismiss
+    Read --> Expired : Expire
+
+    Snoozed --> Unread : Wake
+    Snoozed --> Expired : Expire
 ```
 
 ### Valid Transitions
@@ -236,11 +225,17 @@ These are set on the `notification_types` table via `RegisterType` or `UpdateTyp
 
 Given `escalation_interval_seconds = 300` and `max_escalations = 3`:
 
-```
-T+0s     Notification created, initial delivery, next_escalation_at = T+300s
-T+300s   Escalation #1 (escalation_count=1), re-delivered, next_at = T+600s
-T+600s   Escalation #2 (escalation_count=2), re-delivered, next_at = T+900s
-T+900s   Escalation #3 (escalation_count=3), re-delivered, next_at = NULL (max reached)
+```mermaid
+gantt
+    title Escalation Timeline (interval=300s, max=3)
+    dateFormat X
+    axisFormat %s
+
+    section Escalations
+    Created + initial delivery           :milestone, 0, 0
+    Escalation 1 (count=1, re-deliver)   :milestone, 300, 300
+    Escalation 2 (count=2, re-deliver)   :milestone, 600, 600
+    Escalation 3 (count=3, max reached)  :milestone, 900, 900
 ```
 
 If the user marks the notification as read before an escalation fires, the state
@@ -278,30 +273,18 @@ evaluated top-down; the first matching rule that suppresses delivery wins.
 
 ### Resolution Order
 
-```
-1. Global User Toggle (user_preferences.global_enabled)
-   |
-   +-- If false: skip delivery ("user has notifications globally disabled")
-   |
-2. Mute Rules (mute_rules table)
-   |
-   +-- If any active rule matches: skip ("muted by user rule")
-   |   - Matches by service_id (NULL = all services)
-   |   - Matches by notification_type_id (NULL = all types)
-   |   - Active if muted_until is NULL (permanent) or > now()
-   |
-3. User Service Preference (user_service_preferences)
-   |
-   +-- If enabled = false: skip ("service disabled by user preference")
-   +-- If min_severity is set and level severity < threshold: skip
-   |
-4. User Type Preference (user_type_preferences)
-   |
-   +-- If enabled = false: skip ("notification type disabled by user preference")
-   |
-5. Channel Resolution (if delivering)
-      Priority: type_pref.channels > service_pref.channels >
-                notification_type.default_channels > global_policy.default_channels
+```mermaid
+graph TD
+    A["1. Global User Toggle<br>(user_preferences.global_enabled)"] -->|false| SKIP1["Skip: globally disabled"]
+    A -->|true| B["2. Mute Rules<br>(mute_rules table)"]
+    B -->|"active rule matches<br>(by service_id, type_id,<br>muted_until NULL or > now)"| SKIP2["Skip: muted by user rule"]
+    B -->|no match| C["3. User Service Preference<br>(user_service_preferences)"]
+    C -->|enabled = false| SKIP3["Skip: service disabled"]
+    C -->|"min_severity set and<br>level severity < threshold"| SKIP4["Skip: below severity threshold"]
+    C -->|pass| D["4. User Type Preference<br>(user_type_preferences)"]
+    D -->|enabled = false| SKIP5["Skip: type disabled"]
+    D -->|pass| E["5. Channel Resolution"]
+    E --> F["type_pref.channels<br>> service_pref.channels<br>> type.default_channels<br>> global_policy.default_channels"]
 ```
 
 ### Channel Resolution Detail

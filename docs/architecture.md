@@ -6,41 +6,60 @@ Estafeta is a stateless, horizontally scalable notification service built in Rus
 It exposes five gRPC services, uses NATS JetStream for durable message passing,
 NATS Core for real-time fan-out, and PostgreSQL for persistence and coordination.
 
-```
- Producers                      Estafeta Cluster                       External
- (gRPC)                                                                Channels
-                        +-------------------------------+
-                        |        gRPC Server            |
-                        |  +-------------------------+  |
-  SendNotification ---> |  | NotificationService     |  |
-  RegisterService  ---> |  | AdminService            |  |
-  RegisterType     ---> |  | SchemaRegistryService   |  |
-  SetPreferences   ---> |  | UserConfigService       |  |
-  Subscribe        ---> |  | StreamingService -------+----- NATS Core --> Client
-                        |  +-------------------------+  |
-                        +---------|------|------|--------+
-                                  |      |      |
-          +-----------------------+      |      +-------------------+
-          |                              |                          |
-          v                              v                          v
-  +---------------+          +---------------------+     +--------------------+
-  | NATS JetStream|          |     PostgreSQL       |     | NATS JetStream     |
-  | NOTIFICATIONS |          |                      |     | DELIVERY           |
-  | stream        |          | services             |     | stream             |
-  |               |          | notification_types   |     |                    |
-  | notif.ingest. |          | notification_levels  |     | delivery.dispatch. |
-  | {service}     |          | notifications        |     | {channel}          |
-  +-------+-------+          | delivery_attempts    |     +--------+-----------+
-          |                  | user_preferences     |              |
-          v                  | user_service_prefs   |              v
-  +---------------+          | user_type_prefs      |     +------------------+
-  | Processor     |          | mute_rules           |     | Delivery Workers |
-  | (consumer:    |--------->| user_channel_configs |     | email, push,     |
-  |  "processor") |          | user_devices         |     | sms, webhook     |
-  +---------------+          | global_policies      |     +------------------+
-                             +----------------------+       |  |  |  |
-                                                            v  v  v  v
-                                                        SMTP  FCM SNS Webhooks
+```mermaid
+graph TD
+    subgraph Producers
+        SendNotification
+        RegisterService
+        RegisterType
+        SetPreferences
+        Subscribe
+    end
+
+    subgraph Estafeta["Estafeta Cluster — gRPC Server"]
+        NotificationService
+        AdminService
+        SchemaRegistryService
+        UserConfigService
+        StreamingService
+    end
+
+    SendNotification -->|gRPC| NotificationService
+    RegisterService -->|gRPC| AdminService
+    RegisterType -->|gRPC| SchemaRegistryService
+    SetPreferences -->|gRPC| UserConfigService
+    Subscribe -->|gRPC| StreamingService
+
+    subgraph NATS_NOTIF["NATS JetStream — NOTIFICATIONS stream"]
+        IngestSubject["notif.ingest.{service}"]
+    end
+
+    subgraph PG["PostgreSQL"]
+        Tables["services, notification_types,<br>notification_levels, notifications,<br>delivery_attempts, user_preferences,<br>user_service_prefs, user_type_prefs,<br>mute_rules, user_channel_configs,<br>user_devices, global_policies"]
+    end
+
+    subgraph NATS_DELIV["NATS JetStream — DELIVERY stream"]
+        DelivSubject["delivery.dispatch.{channel}"]
+    end
+
+    NotificationService --> IngestSubject
+    NotificationService --> PG
+    AdminService --> PG
+    SchemaRegistryService --> PG
+    UserConfigService --> PG
+
+    IngestSubject --> Processor["Processor<br>(consumer: processor)"]
+    Processor --> PG
+    Processor --> DelivSubject
+    Processor -->|NATS Core<br>rt.user.uid| StreamingService
+
+    DelivSubject --> Workers["Delivery Workers<br>email, push, sms, webhook"]
+    Workers --> SMTP
+    Workers --> FCM
+    Workers --> SNS
+    Workers --> Webhooks
+
+    StreamingService -->|NATS Core| Client[Connected Clients]
 ```
 
 ## NATS Topology
@@ -86,62 +105,95 @@ subscribes to these NATS subjects and relays events to the client.
 
 The database contains 10 tables across 11 migrations (0000 through 0010):
 
-```
-services                          notification_types
-+-------------------+             +---------------------------+
-| id (PK)           |<---+       | id (PK)                   |
-| tenant_id         |    |       | tenant_id                 |
-| slug (UNIQUE)     |    +-------| service_id (FK)           |
-| display_name      |            | type_key                  |
-| description       |            | display_name              |
-| api_key_hash      |            | json_schema (JSONB)       |
-| enabled           |            | default_channels (TEXT[])  |
-| created_at        |            | default_ttl_seconds       |
-| updated_at        |            | escalation_interval_secs  |
-+-------------------+            | max_escalations           |
-        |                        | enabled                   |
-        |                        | UNIQUE(service_id,type_key)|
-        |                        +---------------------------+
-        |                                    |
-        v                                    v
-notifications                    notification_levels
-+----------------------------+   +-------------------------+
-| id (PK)                    |   | id (PK)                 |
-| tenant_id                  |   | tenant_id               |
-| service_id (FK)            |   | service_id (FK)         |
-| notification_type_id (FK)  |   | key                     |
-| level_id (FK, nullable)    |   | display_name            |
-| recipient_user_id          |   | severity (INT)          |
-| state (CHECK constraint)   |   | color                   |
-| payload (JSONB)            |   | icon                    |
-| group_key                  |   | UNIQUE(service_id, key) |
-| idempotency_key (UNIQUE)   |   +-------------------------+
-| metadata (JSONB)           |
-| snoozed_until              |
-| expires_at                 |
-| next_escalation_at         |
-| escalation_count           |
-| read_at                    |
-| created_at, updated_at     |
-+----------------------------+
-        |
-        v
-delivery_attempts                user_preferences
-+------------------------+      +---------------------+
-| id (PK)                |      | id (PK)             |
-| tenant_id              |      | tenant_id           |
-| notification_id (FK)   |      | user_id (UNIQUE)    |
-| channel                |      | global_enabled      |
-| status (CHECK)         |      | created_at          |
-| attempt_number         |      | updated_at          |
-| next_retry_at          |      +---------------------+
-| last_error             |
-| external_id            |      user_service_preferences
-| created_at, updated_at |      user_type_preferences
-+------------------------+      mute_rules
-                                user_channel_configs
-                                user_devices
-                                global_policies
+```mermaid
+erDiagram
+    services {
+        UUID id PK
+        UUID tenant_id
+        TEXT slug UK
+        TEXT display_name
+        TEXT description
+        TEXT api_key_hash
+        BOOLEAN enabled
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    notification_types {
+        UUID id PK
+        UUID tenant_id
+        UUID service_id FK
+        TEXT type_key
+        TEXT display_name
+        JSONB json_schema
+        TEXT_ARRAY default_channels
+        INT default_ttl_seconds
+        INT escalation_interval_secs
+        INT max_escalations
+        BOOLEAN enabled
+    }
+
+    notification_levels {
+        UUID id PK
+        UUID tenant_id
+        UUID service_id FK
+        TEXT key
+        TEXT display_name
+        INT severity
+        TEXT color
+        TEXT icon
+    }
+
+    notifications {
+        UUID id PK
+        UUID tenant_id
+        UUID service_id FK
+        UUID notification_type_id FK
+        UUID level_id FK
+        TEXT recipient_user_id
+        TEXT state
+        JSONB payload
+        TEXT group_key
+        TEXT idempotency_key UK
+        JSONB metadata
+        TIMESTAMPTZ snoozed_until
+        TIMESTAMPTZ expires_at
+        TIMESTAMPTZ next_escalation_at
+        INT escalation_count
+        TIMESTAMPTZ read_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    delivery_attempts {
+        UUID id PK
+        UUID tenant_id
+        UUID notification_id FK
+        TEXT channel
+        TEXT status
+        INT attempt_number
+        TIMESTAMPTZ next_retry_at
+        TEXT last_error
+        TEXT external_id
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    user_preferences {
+        UUID id PK
+        UUID tenant_id
+        TEXT user_id UK
+        BOOLEAN global_enabled
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    services ||--o{ notification_types : has
+    services ||--o{ notification_levels : has
+    services ||--o{ notifications : has
+    notification_types ||--o{ notifications : has
+    notification_levels ||--o{ notifications : has
+    notifications ||--o{ delivery_attempts : has
 ```
 
 Key indexes on `notifications` support the background scheduler:

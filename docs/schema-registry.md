@@ -372,40 +372,22 @@ brief window of staleness is acceptable.
 
 The complete validation flow for a `SendNotification` call:
 
-```
-  Producer calls SendNotification
-         |
-         v
-  1. Extract JWT claims (AuthInterceptor)
-         |
-         v
-  2. Check Keto: services/{service_slug}#send@{subject}
-         |
-         v
-  3. Look up service by slug
-     - Not found? -> NOT_FOUND
-     - Disabled?  -> FAILED_PRECONDITION
-         |
-         v
-  4. Look up notification type by (service_id, type_key)
-     - Not found? -> NOT_FOUND
-     - Disabled?  -> FAILED_PRECONDITION
-         |
-         v
-  5. Convert proto Struct payload to serde_json::Value
-         |
-         v
-  6. Validate payload against type's json_schema
-     - Invalid? -> INVALID_ARGUMENT with error list
-         |
-         v
-  7. Build IngestMessage with generated UUID
-         |
-         v
-  8. Publish to JetStream: notif.ingest.{service_slug}
-         |
-         v
-  9. Return SendNotificationResponse { notification_id }
+```mermaid
+graph TD
+    Start["Producer calls SendNotification"] --> Step1["1. Extract JWT claims<br>(AuthInterceptor)"]
+    Step1 --> Step2["2. Check Keto:<br>services/{service_slug}#send@{subject}"]
+    Step2 --> Step3["3. Look up service by slug"]
+    Step3 -->|Not found| ERR1["NOT_FOUND"]
+    Step3 -->|Disabled| ERR2["FAILED_PRECONDITION"]
+    Step3 -->|OK| Step4["4. Look up notification type<br>by (service_id, type_key)"]
+    Step4 -->|Not found| ERR3["NOT_FOUND"]
+    Step4 -->|Disabled| ERR4["FAILED_PRECONDITION"]
+    Step4 -->|OK| Step5["5. Convert proto Struct<br>to serde_json::Value"]
+    Step5 --> Step6["6. Validate payload against<br>type's json_schema"]
+    Step6 -->|Invalid| ERR5["INVALID_ARGUMENT<br>with error list"]
+    Step6 -->|Valid| Step7["7. Build IngestMessage<br>with generated UUID"]
+    Step7 --> Step8["8. Publish to JetStream:<br>notif.ingest.{service_slug}"]
+    Step8 --> Step9["9. Return SendNotificationResponse<br>{ notification_id }"]
 ```
 
 Validation happens synchronously in the gRPC handler (step 6), before the message
