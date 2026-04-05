@@ -6,7 +6,7 @@ CREATE TABLE notifications (
     level_id UUID REFERENCES notification_levels(id),
     recipient_user_id TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'unseen'
-        CHECK (state IN ('unseen', 'unread', 'read', 'snoozed', 'dismissed', 'expired')),
+        CHECK (state IN ('unseen', 'unread', 'read', 'snoozed', 'archived', 'expired')),
     payload JSONB NOT NULL,
     group_key TEXT,
     idempotency_key TEXT,

@@ -288,7 +288,7 @@ pub async fn snooze(
     Ok(result.rows_affected())
 }
 
-pub async fn dismiss(
+pub async fn archive(
     pool: &PgPool,
     user_id: &str,
     ids: &[Uuid],
@@ -296,7 +296,7 @@ pub async fn dismiss(
     let result = sqlx::query(
         r#"
         UPDATE notifications
-        SET state = 'dismissed', updated_at = now()
+        SET state = 'archived', updated_at = now()
         WHERE recipient_user_id = $1 AND id = ANY($2)
           AND state IN ('unseen', 'unread', 'read', 'snoozed')
         "#,
@@ -308,7 +308,7 @@ pub async fn dismiss(
     Ok(result.rows_affected())
 }
 
-pub async fn dismiss_all_in_group(
+pub async fn archive_all_in_group(
     pool: &PgPool,
     user_id: &str,
     service_id: Uuid,
@@ -316,13 +316,52 @@ pub async fn dismiss_all_in_group(
     let result = sqlx::query(
         r#"
         UPDATE notifications
-        SET state = 'dismissed', updated_at = now()
+        SET state = 'archived', updated_at = now()
         WHERE recipient_user_id = $1 AND service_id = $2
           AND state IN ('unseen', 'unread', 'read', 'snoozed')
         "#,
     )
     .bind(user_id)
     .bind(service_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn unarchive(
+    pool: &PgPool,
+    user_id: &str,
+    ids: &[Uuid],
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        UPDATE notifications
+        SET state = 'read', updated_at = now()
+        WHERE recipient_user_id = $1 AND id = ANY($2)
+          AND state = 'archived'
+        "#,
+    )
+    .bind(user_id)
+    .bind(ids)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn producer_mark_read(
+    pool: &PgPool,
+    user_id: &str,
+    ids: &[Uuid],
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        UPDATE notifications
+        SET state = 'read', read_at = now(), updated_at = now()
+        WHERE recipient_user_id = $1 AND id = ANY($2) AND state = 'unread'
+        "#,
+    )
+    .bind(user_id)
+    .bind(ids)
     .execute(pool)
     .await?;
     Ok(result.rows_affected())

@@ -364,7 +364,7 @@ async fn test_snooze_and_wake() {
 }
 
 #[tokio::test]
-async fn test_dismiss() {
+async fn test_archive() {
     let db = common::TestDb::new().await;
     let (svc_id, type_id) = setup_service_and_type(&db.pool).await;
 
@@ -390,7 +390,7 @@ async fn test_dismiss() {
     .await
     .unwrap();
 
-    let affected = notifications::dismiss(&db.pool, "user-1", &[notif.id])
+    let affected = notifications::archive(&db.pool, "user-1", &[notif.id])
         .await
         .unwrap();
     assert_eq!(affected, 1);
@@ -399,17 +399,17 @@ async fn test_dismiss() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.state, "dismissed");
+    assert_eq!(fetched.state, "archived");
 
-    // Can't dismiss again
-    let affected = notifications::dismiss(&db.pool, "user-1", &[notif.id])
+    // Can't archive again
+    let affected = notifications::archive(&db.pool, "user-1", &[notif.id])
         .await
         .unwrap();
     assert_eq!(affected, 0);
 }
 
 #[tokio::test]
-async fn test_dismiss_all_in_group() {
+async fn test_archive_all_in_group() {
     let db = common::TestDb::new().await;
     let (svc_id, type_id) = setup_service_and_type(&db.pool).await;
 
@@ -461,11 +461,11 @@ async fn test_dismiss_all_in_group() {
     .await
     .unwrap();
 
-    let dismissed = notifications::dismiss_all_in_group(&db.pool, "user-1", svc_id)
+    let archived = notifications::archive_all_in_group(&db.pool, "user-1", svc_id)
         .await
         .unwrap();
-    // Should dismiss all 4 notifications belonging to this service for the user
-    assert_eq!(dismissed, 4);
+    // Should archive all 4 notifications belonging to this service for the user
+    assert_eq!(archived, 4);
 }
 
 #[tokio::test]

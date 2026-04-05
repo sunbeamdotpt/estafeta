@@ -2,13 +2,16 @@
 
 > *Tem uma carta para si.*
 
-A unified platform notification service. Estafeta consolidates notifications from
-dozens of systems — email, codes, messages, calendar, and more — into a single
-gRPC-based Rust service backed by NATS JetStream and PostgreSQL.
+A unified notification inbox for your entire platform. Estafeta consolidates
+notifications from dozens of producer systems into a single, queryable inbox
+consumed exclusively through gRPC query and streaming APIs. No outbound
+email. No push. No SMS. Just one inbox that every client reads from.
 
-Estafeta provides a single notification bus that any system can publish to and any
-client can subscribe to, enabling a unified notification widget across every
-application in your platform.
+Notification fatigue happens when every service rolls its own alerts, badges,
+and delivery pipelines. Estafeta eliminates the problem at the source: every
+notification lives in one place, with consistent state tracking, grouping, and
+user-controlled preferences -- so users see exactly what matters and nothing
+they have already dealt with.
 
 ## Architecture
 
@@ -16,8 +19,8 @@ application in your platform.
 graph LR
     Producers -->|gRPC| Estafeta
     Estafeta -->|publish| JS[NATS JetStream]
-    JS --> Processor[Processor Consumer<br>persist to PG,<br>resolve prefs,<br>fan-out to NATS Core]
-    JS --> Delivery[Delivery Consumers<br>email, push, sms,<br>webhook]
+    JS --> Processor[Processor Consumer<br>validate, persist to PG,<br>resolve prefs,<br>fan-out to NATS Core]
+    Processor --> PG[(PostgreSQL)]
     Processor --> NC[NATS Core<br>rt.user.uid]
     NC --> Stream[gRPC Server-Stream]
     Stream --> Clients[Connected Clients]
@@ -29,25 +32,36 @@ so every instance that has a connected user receives the event.
 
 ## Features
 
-- **Unified ingestion** — any service publishes notifications via gRPC with
-  schema-validated payloads
-- **Schema registry** — services register JSON schemas for their notification
+- **Unified inbox** -- any service publishes notifications via gRPC; clients
+  consume them from a single inbox through query or streaming APIs
+- **Three-state read tracking** -- notifications progress through
+  **unseen** -> **unread** -> **read**. *Unseen* drives the bell badge count.
+  *Unread* means the user has seen the notification in a dropdown but has not
+  interacted with it. This distinction lets you build accurate badge counters
+  and bold-title lists with one data model.
+- **Additional states** -- **snoozed** (timed reappearance), **dismissed**
+  (user-hidden), and **expired** (TTL elapsed) round out the lifecycle
+- **Schema registry** -- services register JSON schemas for their notification
   types at runtime; payloads are validated on ingestion
-- **Per-service notification levels** — each service defines its own severity
+- **Per-service notification levels** -- each service defines its own severity
   levels (critical, warning, info, etc.)
-- **Per-user preferences** — users configure which services, types, and channels
-  they want, with minimum severity thresholds and mute rules
-- **Notification lifecycle** — read/unread, snooze with timed wake-up,
-  dismiss, TTL-based expiration, priority escalation
-- **Multi-channel delivery** — email (SMTP/SES), push (FCM/APNs), SMS,
-  webhooks with HMAC signing, each with independent retry and backoff
-- **Real-time streaming** — gRPC server-streaming backed by NATS Core pub/sub
+- **Per-user preferences** -- users configure which services, types, and
+  severity thresholds they care about, plus mute rules, catch-up mode, and
+  sort mode via `UserConfigService`
+- **Deep linking** -- every notification can carry an `action_url` and an
+  `icon` field, making it trivial to build rich, clickable notification UIs
+- **Bulk actions** -- `DismissAllInGroup` lets users triage entire notification
+  groups in one call
+- **Escalation actions** -- `EscalationAction` can **resurface**, **bump**, or
+  **elevate** a notification that has not been acted on within a configured
+  window
+- **Real-time streaming** -- gRPC server-streaming backed by NATS Core pub/sub
   with per-service filtering
-- **Runtime configuration** — admins manage services, schemas, and global
-  policies; users manage their own preferences — all at runtime via gRPC
-- **JWT authentication** — validates tokens via Ory Hydra JWKS with
+- **Runtime configuration** -- admins manage services, schemas, and global
+  policies; users manage their own preferences -- all at runtime via gRPC
+- **JWT authentication** -- validates tokens via Ory Hydra JWKS with
   authorization checks via Ory Keto
-- **Multi-tenancy ready** — nullable `tenant_id` on every table
+- **Multi-tenancy ready** -- nullable `tenant_id` on every table
 
 ## Quick Start
 
@@ -100,19 +114,14 @@ Nested configs use `__` as separator.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ESTAFETA_DATABASE_URL` | yes | — | PostgreSQL connection string |
-| `ESTAFETA_NATS_URL` | yes | — | NATS server URL |
-| `ESTAFETA_HYDRA_JWKS_URL` | yes | — | Ory Hydra JWKS endpoint |
-| `ESTAFETA_KETO_URL` | yes | — | Ory Keto read API URL |
+| `ESTAFETA_DATABASE_URL` | yes | -- | PostgreSQL connection string |
+| `ESTAFETA_NATS_URL` | yes | -- | NATS server URL |
+| `ESTAFETA_HYDRA_JWKS_URL` | yes | -- | Ory Hydra JWKS endpoint |
+| `ESTAFETA_KETO_URL` | yes | -- | Ory Keto read API URL |
 | `ESTAFETA_GRPC_PORT` | no | `50051` | gRPC listen port |
 | `ESTAFETA_DATABASE_MAX_CONNECTIONS` | no | `10` | PG connection pool size |
-| `ESTAFETA_JWT_ISSUER` | no | — | Expected JWT issuer claim |
+| `ESTAFETA_JWT_ISSUER` | no | -- | Expected JWT issuer claim |
 | `ESTAFETA_LOG_LEVEL` | no | `info` | Log level filter |
-| `ESTAFETA_SMTP__HOST` | no | — | SMTP server host |
-| `ESTAFETA_SMTP__PORT` | no | `587` | SMTP server port |
-| `ESTAFETA_SMTP__USERNAME` | no | — | SMTP auth username |
-| `ESTAFETA_SMTP__PASSWORD` | no | — | SMTP auth password |
-| `ESTAFETA_SMTP__FROM_ADDRESS` | no | — | Sender email address |
 
 See [docs/configuration.md](docs/configuration.md) for the full reference.
 
@@ -124,8 +133,8 @@ Estafeta exposes five gRPC services:
 |---------|---------|
 | `AdminService` | Register/manage producer services, global policies |
 | `SchemaRegistryService` | Register notification types with JSON schemas, severity levels |
-| `NotificationService` | Send, query, and manage notification lifecycle |
-| `UserConfigService` | Per-user preferences, mute rules, device registration, channel config |
+| `NotificationService` | Query, acknowledge, snooze, dismiss, and bulk-manage notifications |
+| `UserConfigService` | Per-user preferences, mute rules, catch-up mode, sort mode |
 | `StreamingService` | Real-time server-streaming of notification events |
 
 Proto definitions are in [`proto/estafeta/v1/`](proto/estafeta/v1/).
@@ -143,7 +152,6 @@ estafeta/
 │   │       ├── auth/            # JWT validation, Ory Keto authorization
 │   │       ├── cache/           # In-process moka caches
 │   │       ├── db/              # PostgreSQL query layer
-│   │       ├── delivery/        # Multi-channel delivery (email, push, SMS, webhook)
 │   │       ├── grpc/            # gRPC service implementations
 │   │       ├── lifecycle/       # State machine, background scheduler
 │   │       ├── nats/            # JetStream setup, publishing, message types
@@ -156,13 +164,12 @@ estafeta/
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — system design, data flow, key decisions
-- [API Reference](docs/api.md) — all gRPC services and RPCs
-- [Configuration](docs/configuration.md) — environment variables, delivery channels
-- [Deployment](docs/deployment.md) — running in production, scaling, observability
-- [Schema Registry](docs/schema-registry.md) — registering notification types and schemas
-- [Notification Lifecycle](docs/lifecycle.md) — states, transitions, snooze, escalation
-- [Delivery Channels](docs/delivery.md) — email, push, SMS, webhook configuration
+- [Architecture](docs/architecture.md) -- system design, data flow, key decisions
+- [API Reference](docs/api.md) -- all gRPC services and RPCs
+- [Configuration](docs/configuration.md) -- environment variables and tuning
+- [Deployment](docs/deployment.md) -- running in production, scaling, observability
+- [Schema Registry](docs/schema-registry.md) -- registering notification types and schemas
+- [Notification Lifecycle](docs/lifecycle.md) -- states, transitions, snooze, escalation
 
 ## License
 

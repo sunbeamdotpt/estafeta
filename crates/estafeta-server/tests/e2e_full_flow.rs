@@ -548,7 +548,7 @@ async fn test_unread_count() {
 // ─── Lifecycle Tests ─────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_mark_seen_read_unread_dismiss() {
+async fn test_mark_seen_read_unread_archive() {
     let mut env = common::TestEnv::new().await;
     let (svc_slug, type_key) = setup_service(&mut env).await;
 
@@ -648,9 +648,9 @@ async fn test_mark_seen_read_unread_dismiss() {
         .into_inner();
     assert_eq!(notif.state, NotificationState::Unread as i32);
 
-    // Dismiss
+    // Archive
     env.notification_client
-        .dismiss(DismissRequest {
+        .archive(ArchiveRequest {
             notification_ids: vec![nid.clone()],
         })
         .await
@@ -664,7 +664,7 @@ async fn test_mark_seen_read_unread_dismiss() {
         .await
         .unwrap()
         .into_inner();
-    assert_eq!(notif.state, NotificationState::Dismissed as i32);
+    assert_eq!(notif.state, NotificationState::Archived as i32);
 }
 
 #[tokio::test]
@@ -938,10 +938,10 @@ async fn test_resurface_notification() {
         .unwrap();
 }
 
-// ─── Dismiss All In Group Tests ─────────────────────────────────────
+// ─── Archive All In Group Tests ─────────────────────────────────────
 
 #[tokio::test]
-async fn test_dismiss_all_in_group() {
+async fn test_archive_all_in_group() {
     let mut env = common::TestEnv::new().await;
     let (svc_slug, type_key) = setup_service(&mut env).await;
 
@@ -978,14 +978,14 @@ async fn test_dismiss_all_in_group() {
 
     let resp = env
         .notification_client
-        .dismiss_all_in_group(DismissAllInGroupRequest {
+        .archive_all_in_group(ArchiveAllInGroupRequest {
             service_slug: svc_slug,
         })
         .await
         .unwrap()
         .into_inner();
 
-    assert_eq!(resp.dismissed_count, 3);
+    assert_eq!(resp.archived_count, 3);
 }
 
 // ─── Batch Notification Tests ────────────────────────────────────────

@@ -32,11 +32,17 @@ service NotificationService {
   // Snooze a notification until a given time
   rpc Snooze(SnoozeRequest) returns (google.protobuf.Empty);
 
-  // Dismiss one or more notifications
-  rpc Dismiss(DismissRequest) returns (google.protobuf.Empty);
+  // Archive one or more notifications
+  rpc Archive(ArchiveRequest) returns (google.protobuf.Empty);
 
-  // Dismiss all notifications in a service group
-  rpc DismissAllInGroup(DismissAllInGroupRequest) returns (DismissAllInGroupResponse);
+  // Unarchive one or more notifications (archived -> read)
+  rpc Unarchive(UnarchiveRequest) returns (google.protobuf.Empty);
+
+  // Archive all notifications in a service group
+  rpc ArchiveAllInGroup(ArchiveAllInGroupRequest) returns (ArchiveAllInGroupResponse);
+
+  // Mark notifications as read on behalf of a user (producer/service call)
+  rpc ProducerMarkRead(ProducerMarkReadRequest) returns (google.protobuf.Empty);
 
   // Get the unseen count (drives the bell badge)
   rpc GetUnseenCount(GetUnseenCountRequest) returns (UnseenCountResponse);
@@ -133,16 +139,26 @@ message SnoozeRequest {
   google.protobuf.Timestamp snooze_until = 2;
 }
 
-message DismissRequest {
+message ArchiveRequest {
   repeated string notification_ids = 1;
 }
 
-message DismissAllInGroupRequest {
+message UnarchiveRequest {
+  repeated string notification_ids = 1;
+}
+
+message ArchiveAllInGroupRequest {
   string service_slug = 1;
 }
 
-message DismissAllInGroupResponse {
-  int64 dismissed_count = 1;
+message ArchiveAllInGroupResponse {
+  int64 archived_count = 1;
+}
+
+message ProducerMarkReadRequest {
+  string service_slug = 1;
+  repeated string notification_ids = 2;
+  string recipient_user_id = 3;
 }
 
 message GetUnseenCountRequest {

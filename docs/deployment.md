@@ -15,7 +15,7 @@ dependency-layer caching, then compiles the release binary. The runtime stage
 uses `debian:bookworm-slim` with only `ca-certificates` installed.
 
 The entrypoint is the `estafeta` binary, which runs the gRPC server and all
-background workers in a single process. The default exposed port is 50051.
+background tasks in a single process. The default exposed port is 50051.
 
 ---
 
@@ -29,25 +29,20 @@ no separate migration step is needed.
 
 ### NATS with JetStream
 
-NATS 2.11+ with JetStream enabled is required. The server creates two
-streams and their consumers on startup:
+NATS 2.11+ with JetStream enabled is required. The server creates one stream
+and its consumer on startup:
 
 | Stream | Subjects | Retention | Purpose |
 |---|---|---|---|
 | `NOTIFICATIONS` | `notif.ingest.>` | WorkQueue | Ingestion pipeline |
-| `DELIVERY` | `delivery.dispatch.>` | WorkQueue | Outbound delivery dispatch |
 
-Consumers:
+Consumer:
 
 | Consumer | Stream | Filter Subject | Ack Wait |
 |---|---|---|---|
 | `processor` | NOTIFICATIONS | `notif.ingest.>` | 30s |
-| `delivery-email` | DELIVERY | `delivery.dispatch.email` | 60s |
-| `delivery-push` | DELIVERY | `delivery.dispatch.push` | 60s |
-| `delivery-sms` | DELIVERY | `delivery.dispatch.sms` | 60s |
-| `delivery-webhook` | DELIVERY | `delivery.dispatch.webhook` | 60s |
 
-All consumers are durable with `max_deliver: 5`.
+The consumer is durable with `max_deliver: 5`.
 
 Real-time streaming uses NATS Core subjects (`rt.user.{user_id}`) for
 low-latency pub/sub -- these do not require JetStream.
@@ -70,15 +65,27 @@ load balancer.
 
 ### JetStream Consumer Groups
 
-All JetStream consumers are durable and use WorkQueue retention. When
-multiple instances connect to the same consumer, messages are distributed
-across instances automatically. No leader election or coordination is needed.
+The JetStream consumer is durable and uses WorkQueue retention. When multiple
+instances connect to the same consumer, messages are distributed across
+instances automatically. No leader election or coordination is needed.
 
 ### Lifecycle Scheduler
 
 The background scheduler (snooze wake-up, TTL expiry, escalation) runs on
 every instance but uses `SELECT FOR UPDATE SKIP LOCKED` to prevent duplicate
 processing. It is safe to run on all replicas concurrently.
+
+### Scaling Guidelines
+
+Estafeta's resource profile is straightforward since all work happens in a
+single process with no per-channel worker partitioning:
+
+- **CPU**: Scale replicas based on gRPC request rate and processor throughput.
+- **Memory**: The primary memory consumers are the in-process moka caches
+  (up to 30,000 entries across three caches) and active gRPC streaming
+  connections.
+- **Database connections**: Size the pool so that
+  `pool_size * replica_count < max_connections - headroom`.
 
 ---
 
@@ -88,7 +95,7 @@ The gRPC server starts accepting connections only after:
 
 1. PostgreSQL connection pool is established
 2. Database migrations are applied
-3. NATS connection is established and JetStream streams/consumers are created
+3. NATS connection is established and JetStream stream/consumer is created
 4. JWKS keys are fetched from Hydra
 
 If any of these steps fail, the process exits with a non-zero code. For
@@ -105,13 +112,13 @@ Estafeta uses `tracing` with `tracing-subscriber` configured for JSON output.
 Every log line includes structured fields:
 
 ```json
-{"timestamp":"...","level":"INFO","fields":{"message":"email sent successfully","notification_id":"...","to":"user@example.com"},"target":"estafeta_server::delivery::email"}
+{"timestamp":"...","level":"INFO","fields":{"message":"notification processed","notification_id":"...","recipient":"user123"},"target":"estafeta_server::processor"}
 ```
 
 The log level is controlled by the `ESTAFETA_LOG_LEVEL` environment variable
 (default: `info`). This is passed directly to `tracing_subscriber`'s
 `EnvFilter`, so it supports per-module directives like
-`estafeta_server::delivery=debug,info`.
+`estafeta_server::processor=debug,info`.
 
 ### Metrics
 
@@ -135,12 +142,13 @@ thumb: `(pool_size * replica_count) < max_connections - headroom`.
 
 Migrations run automatically on startup via `sqlx::migrate!`. They are
 embedded in the binary at compile time from
-`crates/estafeta-migrations/migrations/`. There is no need to run a
-separate migration tool in production -- just deploy the new binary and it
-will apply pending migrations before accepting traffic.
+`crates/estafeta-migrations/migrations/`. There is no need to run a separate
+migration tool in production -- just deploy the new binary and it will apply
+pending migrations before accepting traffic.
 
-For zero-downtime deploys, ensure migrations are backward-compatible (additive
-columns with defaults, new tables) so old and new instances can coexist.
+For zero-downtime deploys, ensure migrations are backward-compatible
+(additive columns with defaults, new tables) so old and new instances can
+coexist.
 
 ---
 
@@ -148,23 +156,21 @@ columns with defaults, new tables) so old and new instances can coexist.
 
 ### Stream Retention
 
-Both streams use `WorkQueue` retention. Messages are deleted once all
-consumers have acknowledged them. This keeps storage bounded without
+The NOTIFICATIONS stream uses `WorkQueue` retention. Messages are deleted
+once the consumer has acknowledged them. This keeps storage bounded without
 explicit TTL configuration.
 
 ### Storage
 
 JetStream is configured with file-based storage. Provision persistent
-volumes for the NATS data directory (`/data` in the compose file) to
-survive container restarts.
+volumes for the NATS data directory (`/data` in the compose file) to survive
+container restarts.
 
 ### Consumer Configuration
 
-- **ack_wait:** 30s for the processor, 60s for delivery workers. If a
-  message is not acknowledged within this window it is redelivered.
-- **max_deliver:** 5 for all consumers. After 5 redelivery attempts the
-  message is dropped. The delivery worker also has its own retry logic
-  with exponential backoff.
+- **ack_wait:** 30s for the processor. If a message is not acknowledged
+  within this window it is redelivered.
+- **max_deliver:** 5. After 5 redelivery attempts the message is dropped.
 
 ---
 
@@ -172,8 +178,8 @@ survive container restarts.
 
 ### TLS
 
-The gRPC server does not terminate TLS itself. Place it behind a TLS-
-terminating load balancer or sidecar proxy (Envoy, Istio, etc.) in
+The gRPC server does not terminate TLS itself. Place it behind a
+TLS-terminating load balancer or sidecar proxy (Envoy, Istio, etc.) in
 production.
 
 ### JWT Validation

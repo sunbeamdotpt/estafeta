@@ -4,7 +4,8 @@ use tonic::{Request, Response, Status};
 
 use estafeta_proto::estafeta::v1::{
     notification_service_server::NotificationService as NotificationServiceTrait,
-    DismissAllInGroupRequest, DismissAllInGroupResponse, DismissRequest,
+    ArchiveAllInGroupRequest, ArchiveAllInGroupResponse, ArchiveRequest,
+    UnarchiveRequest, ProducerMarkReadRequest,
     GetNotificationRequest, GetUnreadCountRequest, GetUnseenCountRequest,
     ListNotificationsRequest, ListNotificationsResponse, MarkReadRequest,
     MarkSeenRequest, MarkSeenResponse, MarkUnreadRequest, Notification,
@@ -374,25 +375,40 @@ impl NotificationServiceTrait for NotificationServiceImpl {
         Ok(Response::new(()))
     }
 
-    async fn dismiss(
+    async fn archive(
         &self,
-        request: Request<DismissRequest>,
+        request: Request<ArchiveRequest>,
     ) -> Result<Response<()>, Status> {
         let subject = AuthClaims::from_extensions(request.extensions())?.subject.clone();
         let req = request.into_inner();
         let ids = parse_uuids(&req.notification_ids)?;
 
-        db::notifications::dismiss(&self.pool, &subject, &ids)
+        db::notifications::archive(&self.pool, &subject, &ids)
             .await
             .map_err(|e| Status::internal(format!("db error: {e}")))?;
 
         Ok(Response::new(()))
     }
 
-    async fn dismiss_all_in_group(
+    async fn unarchive(
         &self,
-        request: Request<DismissAllInGroupRequest>,
-    ) -> Result<Response<DismissAllInGroupResponse>, Status> {
+        request: Request<UnarchiveRequest>,
+    ) -> Result<Response<()>, Status> {
+        let subject = AuthClaims::from_extensions(request.extensions())?.subject.clone();
+        let req = request.into_inner();
+        let ids = parse_uuids(&req.notification_ids)?;
+
+        db::notifications::unarchive(&self.pool, &subject, &ids)
+            .await
+            .map_err(|e| Status::internal(format!("db error: {e}")))?;
+
+        Ok(Response::new(()))
+    }
+
+    async fn archive_all_in_group(
+        &self,
+        request: Request<ArchiveAllInGroupRequest>,
+    ) -> Result<Response<ArchiveAllInGroupResponse>, Status> {
         let subject = AuthClaims::from_extensions(request.extensions())?.subject.clone();
         let req = request.into_inner();
 
@@ -401,13 +417,34 @@ impl NotificationServiceTrait for NotificationServiceImpl {
             .map_err(|e| Status::internal(format!("db error: {e}")))?
             .ok_or_else(|| Status::not_found("service not found"))?;
 
-        let dismissed = db::notifications::dismiss_all_in_group(&self.pool, &subject, service.id)
+        let archived = db::notifications::archive_all_in_group(&self.pool, &subject, service.id)
             .await
             .map_err(|e| Status::internal(format!("db error: {e}")))?;
 
-        Ok(Response::new(DismissAllInGroupResponse {
-            dismissed_count: dismissed as i64,
+        Ok(Response::new(ArchiveAllInGroupResponse {
+            archived_count: archived as i64,
         }))
+    }
+
+    async fn producer_mark_read(
+        &self,
+        request: Request<ProducerMarkReadRequest>,
+    ) -> Result<Response<()>, Status> {
+        let subject = AuthClaims::from_extensions(request.extensions())?.subject.clone();
+        let req = request.into_inner();
+
+        // Authorize: caller must have send permission for the service
+        self.keto
+            .require_service_send(&req.service_slug, &subject)
+            .await?;
+
+        let ids = parse_uuids(&req.notification_ids)?;
+
+        db::notifications::producer_mark_read(&self.pool, &req.recipient_user_id, &ids)
+            .await
+            .map_err(|e| Status::internal(format!("db error: {e}")))?;
+
+        Ok(Response::new(()))
     }
 
     async fn get_unseen_count(

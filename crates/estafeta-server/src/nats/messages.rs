@@ -43,7 +43,7 @@ pub struct RealtimeEvent {
 pub enum RealtimeEventType {
     /// A brand-new notification was created.
     NewNotification,
-    /// An existing notification changed state (e.g. read, dismissed).
+    /// An existing notification changed state (e.g. read, archived).
     StateChange,
     /// The user's unseen count changed.
     UnseenCountUpdate,

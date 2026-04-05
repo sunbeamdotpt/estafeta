@@ -186,20 +186,20 @@ async fn test_get_unseen_count() {
     assert_eq!(resp.total_count, 3);
 }
 
-/// Test DismissAllInGroup dismisses all notifications for a service.
+/// Test ArchiveAllInGroup archives all notifications for a service.
 #[tokio::test]
-async fn test_dismiss_all_in_group() {
+async fn test_archive_all_in_group() {
     let mut env = common::TestEnv::new().await;
-    setup_svc(&mut env, "dismiss-grp").await;
+    setup_svc(&mut env, "archive-grp").await;
 
     for i in 0..3 {
         env.notification_client
             .send_notification(SendNotificationRequest {
-                service_slug: "dismiss-grp".into(),
+                service_slug: "archive-grp".into(),
                 notification_type: "msg".into(),
                 recipient_user_id: "test-admin".into(),
                 level: String::new(),
-                payload: text_payload(&format!("Dismiss {i}")),
+                payload: text_payload(&format!("Archive {i}")),
                 idempotency_key: String::new(),
                 group_key: "batch".into(),
                 ttl_seconds: 0,
@@ -215,21 +215,21 @@ async fn test_dismiss_all_in_group() {
 
     let resp = env
         .notification_client
-        .dismiss_all_in_group(DismissAllInGroupRequest {
-            service_slug: "dismiss-grp".into(),
+        .archive_all_in_group(ArchiveAllInGroupRequest {
+            service_slug: "archive-grp".into(),
         })
         .await
         .unwrap()
         .into_inner();
 
-    assert_eq!(resp.dismissed_count, 3);
+    assert_eq!(resp.archived_count, 3);
 
-    // Verify they are dismissed
+    // Verify they are archived
     let list = env
         .notification_client
         .list_notifications(ListNotificationsRequest {
-            states: vec![NotificationState::Dismissed as i32],
-            service_slugs: vec!["dismiss-grp".into()],
+            states: vec![NotificationState::Archived as i32],
+            service_slugs: vec!["archive-grp".into()],
             notification_types: vec![],
             group_key: String::new(),
             pagination: None,
@@ -241,9 +241,9 @@ async fn test_dismiss_all_in_group() {
     assert_eq!(list.notifications.len(), 3);
 }
 
-/// Test that a notification with a muted service is auto-dismissed.
+/// Test that a notification with a muted service is auto-archived.
 #[tokio::test]
-async fn test_muted_user_auto_dismisses() {
+async fn test_muted_user_auto_archives() {
     let mut env = common::TestEnv::new().await;
     setup_svc(&mut env, "mute-test").await;
 
@@ -264,7 +264,7 @@ async fn test_muted_user_auto_dismisses() {
             notification_type: "msg".into(),
             recipient_user_id: "test-admin".into(),
             level: String::new(),
-            payload: text_payload("Should be dismissed"),
+            payload: text_payload("Should be archived"),
             idempotency_key: String::new(),
             group_key: String::new(),
             ttl_seconds: 0,
@@ -289,8 +289,8 @@ async fn test_muted_user_auto_dismisses() {
 
     assert_eq!(
         notif.state,
-        NotificationState::Dismissed as i32,
-        "muted notification should be auto-dismissed"
+        NotificationState::Archived as i32,
+        "muted notification should be auto-archived"
     );
 }
 
@@ -317,7 +317,7 @@ async fn test_globally_disabled_user() {
             notification_type: "msg".into(),
             recipient_user_id: "test-admin".into(),
             level: String::new(),
-            payload: text_payload("Should be dismissed"),
+            payload: text_payload("Should be archived"),
             idempotency_key: String::new(),
             group_key: String::new(),
             ttl_seconds: 0,
@@ -342,8 +342,8 @@ async fn test_globally_disabled_user() {
 
     assert_eq!(
         notif.state,
-        NotificationState::Dismissed as i32,
-        "globally disabled user's notification should be auto-dismissed"
+        NotificationState::Archived as i32,
+        "globally disabled user's notification should be auto-archived"
     );
 }
 

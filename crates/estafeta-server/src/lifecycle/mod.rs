@@ -1,7 +1,7 @@
 //! Notification lifecycle management.
 //!
 //! Contains the state machine governing notification states (unseen, unread, read, snoozed,
-//! dismissed, expired) and a background [`Scheduler`] that handles snooze wake-ups,
+//! archived, expired) and a background [`Scheduler`] that handles snooze wake-ups,
 //! TTL expiry, and escalation.
 
 pub mod scheduler;

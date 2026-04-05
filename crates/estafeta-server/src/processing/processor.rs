@@ -131,11 +131,11 @@ impl Processor {
             }
         });
 
-        // Determine state: unseen if should_deliver, dismissed otherwise
+        // Determine state: unseen if should_deliver, archived otherwise
         let state = if config.should_deliver {
             "unseen"
         } else {
-            "dismissed"
+            "archived"
         };
 
         // Resolve icon: per-notification icon takes precedence over type default
@@ -189,7 +189,7 @@ impl Processor {
             info!(
                 notification_id = %notification.id,
                 reason = config.skip_reason.as_deref().unwrap_or("unknown"),
-                "notification auto-dismissed"
+                "notification auto-archived"
             );
         }
 

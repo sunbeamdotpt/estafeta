@@ -14,7 +14,7 @@ service StreamingService {
 message SubscribeRequest {
   // Filter to specific services (empty = all)
   repeated string service_slugs = 1;
-  // Include state change events (read, dismissed, etc.)
+  // Include state change events (read, archived, etc.)
   bool include_state_changes = 2;
 }
 

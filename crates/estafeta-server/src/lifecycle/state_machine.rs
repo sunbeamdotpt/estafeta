@@ -7,7 +7,7 @@ pub enum NotificationState {
     Unread,
     Read,
     Snoozed,
-    Dismissed,
+    Archived,
     Expired,
 }
 
@@ -19,7 +19,8 @@ pub enum Transition {
     MarkUnread,
     Snooze,
     Wake,
-    Dismiss,
+    Archive,
+    Unarchive,
     Expire,
 }
 
@@ -40,12 +41,12 @@ impl NotificationState {
     /// Returns which transitions are valid from this state.
     pub fn valid_transitions(self) -> &'static [Transition] {
         match self {
-            Self::Unseen => &[Transition::MarkSeen, Transition::Snooze, Transition::Dismiss, Transition::Expire],
-            Self::Unread => &[Transition::MarkRead, Transition::Snooze, Transition::Dismiss, Transition::Expire],
-            Self::Read => &[Transition::MarkUnread, Transition::Dismiss, Transition::Expire],
+            Self::Unseen => &[Transition::MarkSeen, Transition::Snooze, Transition::Archive, Transition::Expire],
+            Self::Unread => &[Transition::MarkRead, Transition::Snooze, Transition::Archive, Transition::Expire],
+            Self::Read => &[Transition::MarkUnread, Transition::Archive, Transition::Expire],
             Self::Snoozed => &[Transition::Wake, Transition::Expire],
-            Self::Dismissed => &[],
-            Self::Expired => &[],
+            Self::Archived => &[Transition::Unarchive],
+            Self::Expired => &[Transition::Archive],
         }
     }
 
@@ -73,7 +74,7 @@ impl NotificationState {
             Self::Unread => "unread",
             Self::Read => "read",
             Self::Snoozed => "snoozed",
-            Self::Dismissed => "dismissed",
+            Self::Archived => "archived",
             Self::Expired => "expired",
         }
     }
@@ -85,7 +86,7 @@ impl NotificationState {
             "unread" => Ok(Self::Unread),
             "read" => Ok(Self::Read),
             "snoozed" => Ok(Self::Snoozed),
-            "dismissed" => Ok(Self::Dismissed),
+            "archived" => Ok(Self::Archived),
             "expired" => Ok(Self::Expired),
             other => Err(UnknownState(other.to_string())),
         }
@@ -98,7 +99,7 @@ impl NotificationState {
             Self::Unread => 2,
             Self::Read => 3,
             Self::Snoozed => 4,
-            Self::Dismissed => 5,
+            Self::Archived => 5,
             Self::Expired => 6,
         }
     }
@@ -110,7 +111,7 @@ impl NotificationState {
             2 => Ok(Self::Unread),
             3 => Ok(Self::Read),
             4 => Ok(Self::Snoozed),
-            5 => Ok(Self::Dismissed),
+            5 => Ok(Self::Archived),
             6 => Ok(Self::Expired),
             other => Err(UnknownState(other.to_string())),
         }
@@ -126,7 +127,8 @@ impl Transition {
             Self::MarkUnread => NotificationState::Unread,
             Self::Snooze => NotificationState::Snoozed,
             Self::Wake => NotificationState::Unread,
-            Self::Dismiss => NotificationState::Dismissed,
+            Self::Archive => NotificationState::Archived,
+            Self::Unarchive => NotificationState::Read,
             Self::Expire => NotificationState::Expired,
         }
     }
@@ -153,8 +155,8 @@ mod tests {
             NotificationState::Snoozed,
         );
         assert_eq!(
-            NotificationState::Unseen.apply(Transition::Dismiss).unwrap(),
-            NotificationState::Dismissed,
+            NotificationState::Unseen.apply(Transition::Archive).unwrap(),
+            NotificationState::Archived,
         );
         assert_eq!(
             NotificationState::Unread.apply(Transition::MarkRead).unwrap(),
@@ -165,16 +167,16 @@ mod tests {
             NotificationState::Snoozed,
         );
         assert_eq!(
-            NotificationState::Unread.apply(Transition::Dismiss).unwrap(),
-            NotificationState::Dismissed,
+            NotificationState::Unread.apply(Transition::Archive).unwrap(),
+            NotificationState::Archived,
         );
         assert_eq!(
             NotificationState::Read.apply(Transition::MarkUnread).unwrap(),
             NotificationState::Unread,
         );
         assert_eq!(
-            NotificationState::Read.apply(Transition::Dismiss).unwrap(),
-            NotificationState::Dismissed,
+            NotificationState::Read.apply(Transition::Archive).unwrap(),
+            NotificationState::Archived,
         );
         assert_eq!(
             NotificationState::Snoozed.apply(Transition::Wake).unwrap(),
@@ -184,21 +186,44 @@ mod tests {
 
     #[test]
     fn test_invalid_transitions() {
-        assert!(NotificationState::Dismissed.apply(Transition::MarkRead).is_err());
+        assert!(NotificationState::Archived.apply(Transition::MarkRead).is_err());
         assert!(NotificationState::Expired.apply(Transition::MarkUnread).is_err());
         assert!(NotificationState::Read.apply(Transition::Snooze).is_err());
-        assert!(NotificationState::Dismissed.apply(Transition::Wake).is_err());
+        assert!(NotificationState::Archived.apply(Transition::Wake).is_err());
         assert!(NotificationState::Unseen.apply(Transition::MarkRead).is_err());
         assert!(NotificationState::Unseen.apply(Transition::MarkUnread).is_err());
     }
 
     #[test]
-    fn test_expire_from_all_non_terminal() {
+    fn test_unarchive() {
+        assert_eq!(
+            NotificationState::Archived.apply(Transition::Unarchive).unwrap(),
+            NotificationState::Read,
+        );
+        // Can't unarchive from non-archived states
+        assert!(NotificationState::Read.apply(Transition::Unarchive).is_err());
+        assert!(NotificationState::Unseen.apply(Transition::Unarchive).is_err());
+    }
+
+    #[test]
+    fn test_expired_can_archive() {
+        assert_eq!(
+            NotificationState::Expired.apply(Transition::Archive).unwrap(),
+            NotificationState::Archived,
+        );
+        // But expired cannot do other transitions
+        assert!(NotificationState::Expired.apply(Transition::MarkRead).is_err());
+        assert!(NotificationState::Expired.apply(Transition::Expire).is_err());
+    }
+
+    #[test]
+    fn test_expire_from_non_terminal() {
         assert!(NotificationState::Unseen.apply(Transition::Expire).is_ok());
         assert!(NotificationState::Unread.apply(Transition::Expire).is_ok());
         assert!(NotificationState::Read.apply(Transition::Expire).is_ok());
         assert!(NotificationState::Snoozed.apply(Transition::Expire).is_ok());
-        assert!(NotificationState::Dismissed.apply(Transition::Expire).is_err());
+        // Archived is no longer terminal, but expire from archived is not valid
+        assert!(NotificationState::Archived.apply(Transition::Expire).is_err());
         assert!(NotificationState::Expired.apply(Transition::Expire).is_err());
     }
 
@@ -209,7 +234,7 @@ mod tests {
             NotificationState::Unread,
             NotificationState::Read,
             NotificationState::Snoozed,
-            NotificationState::Dismissed,
+            NotificationState::Archived,
             NotificationState::Expired,
         ] {
             let s = state.as_db_str();
@@ -224,7 +249,7 @@ mod tests {
             NotificationState::Unread,
             NotificationState::Read,
             NotificationState::Snoozed,
-            NotificationState::Dismissed,
+            NotificationState::Archived,
             NotificationState::Expired,
         ] {
             let v = state.to_proto();
@@ -236,7 +261,8 @@ mod tests {
     fn test_can_transition_to() {
         assert!(NotificationState::Unseen.can_transition_to(NotificationState::Unread));
         assert!(NotificationState::Unread.can_transition_to(NotificationState::Read));
-        assert!(!NotificationState::Dismissed.can_transition_to(NotificationState::Read));
+        assert!(!NotificationState::Archived.can_transition_to(NotificationState::Archived));
+        assert!(NotificationState::Archived.can_transition_to(NotificationState::Read));
     }
 
     #[test]
