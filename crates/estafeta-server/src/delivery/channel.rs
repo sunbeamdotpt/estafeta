@@ -15,6 +15,7 @@ pub struct RecipientInfo {
     pub push_tokens: Vec<PushTokenInfo>,
 }
 
+/// Device push token details for push notification delivery.
 #[derive(Debug, Clone)]
 pub struct PushTokenInfo {
     pub device_id: String,
@@ -32,6 +33,7 @@ pub enum ChannelType {
 }
 
 impl ChannelType {
+    /// Return the canonical string representation used in config and NATS subjects.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Email => "email",
@@ -41,6 +43,7 @@ impl ChannelType {
         }
     }
 
+    /// Parse a channel type from its string representation.
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "email" => Some(Self::Email),

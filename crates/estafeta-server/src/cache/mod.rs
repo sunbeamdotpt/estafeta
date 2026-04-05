@@ -1,3 +1,9 @@
+//! In-memory caches for hot-path data (notification types, levels, user preferences).
+//!
+//! Backed by [`moka`] with per-cache TTLs and max capacities. These caches sit between
+//! the gRPC/processing layers and the database to avoid repeated queries for data that
+//! changes infrequently.
+
 use moka::future::Cache;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,25 +40,33 @@ pub struct CachedUserPrefs {
     pub mute_rules: Vec<CachedMuteRule>,
 }
 
+/// A user's notification preferences for a specific service.
 #[derive(Debug, Clone)]
 pub struct CachedServicePref {
     pub service_id: Uuid,
     pub enabled: bool,
+    /// Notifications below this severity are suppressed.
     pub min_severity: Option<i32>,
     pub channels: Vec<String>,
 }
 
+/// A user's notification preferences for a specific notification type.
 #[derive(Debug, Clone)]
 pub struct CachedTypePref {
     pub notification_type_id: Uuid,
     pub enabled: bool,
+    /// Channel overrides; `None` means fall through to service/global defaults.
     pub channels: Option<Vec<String>>,
 }
 
+/// A user-defined mute rule that suppresses matching notifications.
 #[derive(Debug, Clone)]
 pub struct CachedMuteRule {
+    /// If `None`, applies to all services.
     pub service_id: Option<Uuid>,
+    /// If `None`, applies to all notification types.
     pub notification_type_id: Option<Uuid>,
+    /// If `None`, the mute is permanent (until deleted).
     pub muted_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -70,6 +84,7 @@ pub struct AppCaches {
 }
 
 impl AppCaches {
+    /// Create caches with default capacities and TTLs.
     pub fn new() -> Self {
         Self {
             notification_types: Cache::builder()
@@ -87,10 +102,12 @@ impl AppCaches {
         }
     }
 
+    /// Build the composite cache key for a notification type lookup.
     pub fn notification_type_key(service_slug: &str, type_key: &str) -> String {
         format!("{service_slug}:{type_key}")
     }
 
+    /// Build the composite cache key for a notification level lookup.
     pub fn notification_level_key(service_slug: &str, level_key: &str) -> String {
         format!("{service_slug}:{level_key}")
     }

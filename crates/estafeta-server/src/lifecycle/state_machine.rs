@@ -21,6 +21,7 @@ pub enum Transition {
     Expire,
 }
 
+/// Error returned when attempting a disallowed state transition.
 #[derive(Debug, thiserror::Error)]
 #[error("invalid state transition: {from} -> {to}")]
 pub struct InvalidTransition {
@@ -28,6 +29,7 @@ pub struct InvalidTransition {
     pub to: NotificationState,
 }
 
+/// Error returned when parsing an unrecognized state string or proto value.
 #[derive(Debug, thiserror::Error)]
 #[error("unknown notification state: '{0}'")]
 pub struct UnknownState(pub String);

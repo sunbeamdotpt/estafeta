@@ -16,6 +16,7 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
+    /// Create a new scheduler with the given database pool and NATS publisher.
     pub fn new(pool: PgPool, publisher: NatsPublisher) -> Self {
         Self { pool, publisher }
     }

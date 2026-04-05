@@ -1,12 +1,15 @@
 use super::jwks::JwksClient;
 use tonic::service::Interceptor;
 
+/// gRPC interceptor that validates the `Authorization: Bearer <token>` header
+/// on every incoming request and injects [`super::AuthClaims`] into the request extensions.
 #[derive(Clone)]
 pub struct AuthInterceptor {
     jwks: JwksClient,
 }
 
 impl AuthInterceptor {
+    /// Create a new interceptor backed by the given [`JwksClient`].
     pub fn new(jwks: JwksClient) -> Self {
         Self { jwks }
     }

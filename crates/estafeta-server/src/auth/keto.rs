@@ -2,6 +2,10 @@ use reqwest::Client;
 use serde::Serialize;
 use tracing::warn;
 
+/// Client for the Ory Keto authorization service.
+///
+/// All permission checks operate in the `estafeta` namespace and return
+/// gRPC-compatible status errors on failure.
 #[derive(Clone)]
 pub struct KetoClient {
     http: Client,
@@ -17,6 +21,7 @@ struct CheckRequest {
 }
 
 impl KetoClient {
+    /// Create a new client pointing at the given Keto base URL.
     pub fn new(base_url: String) -> Self {
         Self {
             http: Client::new(),

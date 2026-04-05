@@ -1,17 +1,24 @@
 use tonic::Extensions;
 
+/// Authenticated user claims extracted from a validated JWT.
 #[derive(Debug, Clone)]
 pub struct AuthClaims {
+    /// The `sub` claim identifying the authenticated user.
     pub subject: String,
+    /// OAuth scopes granted to this token.
     pub scopes: Vec<String>,
 }
 
 impl AuthClaims {
+    /// Retrieve the claims previously inserted into the request extensions by [`super::AuthInterceptor`].
+    ///
+    /// Returns `Unauthenticated` if no claims are present.
     pub fn from_extensions(ext: &Extensions) -> Result<&Self, tonic::Status> {
         ext.get::<Self>()
             .ok_or_else(|| tonic::Status::unauthenticated("missing auth claims"))
     }
 
+    /// Check whether this token carries the given OAuth scope.
     pub fn has_scope(&self, scope: &str) -> bool {
         self.scopes.iter().any(|s| s == scope)
     }

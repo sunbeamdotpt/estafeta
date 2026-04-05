@@ -12,6 +12,7 @@ pub struct NatsPublisher {
 }
 
 impl NatsPublisher {
+    /// Create a publisher with the given JetStream context and NATS client.
     pub fn new(js: jetstream::Context, client: async_nats::Client) -> Self {
         Self { js, client }
     }

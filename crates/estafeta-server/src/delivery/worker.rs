@@ -23,6 +23,7 @@ pub struct DeliveryWorker {
 }
 
 impl DeliveryWorker {
+    /// Create a worker for a single delivery channel backed by the given JetStream consumer.
     pub fn new(
         pool: PgPool,
         channel_impl: Arc<dyn DeliveryChannel>,
@@ -39,6 +40,7 @@ impl DeliveryWorker {
         }
     }
 
+    /// Start the worker loop, pulling and processing delivery messages until the stream ends.
     pub async fn run(self) -> Result<()> {
         info!(channel = %self.channel_name, "delivery worker started");
         let mut messages: jetstream::consumer::pull::Stream = self.consumer.messages().await?;

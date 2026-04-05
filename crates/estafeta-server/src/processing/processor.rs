@@ -20,6 +20,7 @@ pub struct Processor {
 }
 
 impl Processor {
+    /// Create a new processor wired to the given database, NATS publisher, caches, and consumer.
     pub fn new(
         pool: PgPool,
         publisher: NatsPublisher,
@@ -34,6 +35,7 @@ impl Processor {
         }
     }
 
+    /// Start the processing loop, consuming messages until the stream ends.
     pub async fn run(self) -> Result<()> {
         info!("notification processor started");
         let mut messages: jetstream::consumer::pull::Stream = self

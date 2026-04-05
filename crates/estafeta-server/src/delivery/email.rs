@@ -8,12 +8,16 @@ use super::channel::*;
 use crate::config::SmtpConfig;
 use crate::db::notifications::NotificationRow;
 
+/// Email delivery channel backed by an async SMTP transport.
+///
+/// Generic over the transport to allow stub transports in tests.
 pub struct EmailChannel<T: AsyncTransport + Send + Sync = AsyncSmtpTransport<Tokio1Executor>> {
     transport: T,
     from_address: String,
 }
 
 impl EmailChannel<AsyncSmtpTransport<Tokio1Executor>> {
+    /// Build a channel from SMTP configuration, connecting to the configured relay.
     pub fn new(config: &SmtpConfig) -> Result<Self, anyhow::Error> {
         let mut builder =
             AsyncSmtpTransport::<Tokio1Executor>::relay(&config.host)?
@@ -31,6 +35,7 @@ impl EmailChannel<AsyncSmtpTransport<Tokio1Executor>> {
 }
 
 impl<T: AsyncTransport + Send + Sync> EmailChannel<T> {
+    /// Create a channel with a custom transport (useful for testing).
     pub fn with_transport(transport: T, from_address: String) -> Self {
         Self {
             transport,

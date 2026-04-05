@@ -42,11 +42,15 @@ pub struct RealtimeEvent {
     pub unread_count: Option<i64>,
 }
 
+/// Discriminator for real-time event payloads.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RealtimeEventType {
+    /// A brand-new notification was created.
     NewNotification,
+    /// An existing notification changed state (e.g. read, dismissed).
     StateChange,
+    /// The user's unread count changed.
     UnreadCountUpdate,
 }
 

@@ -23,6 +23,10 @@ struct JwkKey {
     e: Option<String>,
 }
 
+/// Client that fetches and caches JSON Web Key Sets for JWT validation.
+///
+/// Keys are cached in memory and automatically refreshed when an unknown `kid` is encountered
+/// or via a periodic background task.
 #[derive(Clone)]
 pub struct JwksClient {
     http: Client,
@@ -32,6 +36,7 @@ pub struct JwksClient {
 }
 
 impl JwksClient {
+    /// Create a new client pointing at the given JWKS endpoint.
     pub fn new(jwks_url: String, issuer: Option<String>) -> Self {
         Self {
             http: Client::new(),
@@ -41,6 +46,7 @@ impl JwksClient {
         }
     }
 
+    /// Fetch the latest key set from the JWKS endpoint and replace the local cache.
     pub async fn refresh(&self) -> Result<()> {
         let resp: JwksResponse = self
             .http
@@ -71,6 +77,9 @@ impl JwksClient {
         Ok(())
     }
 
+    /// Decode and validate a Bearer JWT, returning the extracted [`AuthClaims`].
+    ///
+    /// If the token's `kid` is not in the local cache, a JWKS refresh is triggered automatically.
     pub async fn validate_token(&self, token: &str) -> Result<AuthClaims, tonic::Status> {
         let header = decode_header(token)
             .map_err(|e| tonic::Status::unauthenticated(format!("invalid token header: {e}")))?;
