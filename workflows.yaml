@@ -1,0 +1,437 @@
+# workflows.yaml -- estafeta CI pipeline
+#
+# Runs on every push via wfe-server webhook → ci workflow.
+# Workspace of three crates:
+#   - estafeta-proto        (publishable gRPC types)
+#   - estafeta-migrations   (publishable sqlx migrations)
+#   - estafeta-server       (binary; publishes the container image instead)
+#
+# On mainline: tag → publish proto+migrations → build image → release.
+#
+# Integration tests under crates/estafeta-server/tests/ use testcontainers
+# to spin up Postgres + NATS via the Docker socket. WFE jobs run as
+# unprivileged K8s Jobs with no docker daemon, so those tests are skipped
+# in CI (lib tests only). TODO: refactor the test harness to accept
+# DATABASE_URL + NATS_URL from env so we can run them against the real
+# wfe-provided service pods.
+#
+# === Prerequisites ===
+#
+# 1. wfe-server deployed (see ../sbbb/base/wfe/)
+# 2. wfe-credentials Secret with sccache-*, aws-*, cargo-registry-token,
+#    gitea-token, buildkit-*
+# 3. wfe-ci image at src.sunbeam.pt/studio/wfe-ci:latest
+# 4. buildkitd at buildkitd.build.svc:1234
+
+# --- Shared Templates ---
+
+_templates:
+
+  ci_env: &ci_env
+    SCCACHE_BUCKET: ${WFE_SCCACHE_BUCKET}
+    SCCACHE_REGION: ${WFE_SCCACHE_REGION}
+    SCCACHE_ENDPOINT: ${WFE_SCCACHE_S3_ENDPOINT}
+    SCCACHE_S3_USE_SSL: "true"
+    AWS_ACCESS_KEY_ID: ${WFE_AWS_ACCESS_KEY_ID}
+    AWS_SECRET_ACCESS_KEY: ${WFE_AWS_SECRET_ACCESS_KEY}
+    CARGO_HOME: /workspace/.cargo
+    RUSTC_WRAPPER: /usr/local/cargo/bin/sccache
+    CARGO_INCREMENTAL: "0"
+    GITEA_TOKEN: ${WFE_GITEA_TOKEN}
+    TEA_TOKEN: ${WFE_GITEA_TOKEN}
+    CARGO_REGISTRIES_SUNBEAM_TOKEN: ${WFE_CARGO_REGISTRY_TOKEN}
+    BUILDKIT_CA_CERT: ${WFE_BUILDKIT_CA_CERT}
+    BUILDKIT_CLIENT_CERT: ${WFE_BUILDKIT_CLIENT_CERT}
+    BUILDKIT_CLIENT_KEY: ${WFE_BUILDKIT_CLIENT_KEY}
+
+  ci_config: &ci_config
+    image: src.sunbeam.pt/studio/wfe-ci:latest
+    memory: 4Gi
+    cpu: "2"
+    timeout: 30m
+    env: *ci_env
+
+  ci_long_config: &ci_long_config
+    image: src.sunbeam.pt/studio/wfe-ci:latest
+    memory: 8Gi
+    cpu: "4"
+    timeout: 60m
+    env: *ci_env
+
+# --- Workflows ---
+
+workflows:
+
+  # === checkout ===
+
+  - id: checkout
+    name: Checkout
+    version: 1
+    inputs:
+      repo_url: string
+      commit_sha: string
+    outputs:
+      checkout_ok: bool
+      commit: string
+    steps:
+      - name: clone
+        type: kubernetes
+        outputs:
+          - name: checkout_ok
+          - name: commit
+        config:
+          <<: *ci_config
+          run: |
+            set -euo pipefail
+            cd /workspace
+            if [ ! -d estafeta ]; then
+              git clone "$REPO_URL" estafeta
+            fi
+            cd estafeta
+            git fetch --all
+            git checkout "$COMMIT_SHA"
+            COMMIT=$(git rev-parse HEAD)
+            echo "Checked out: $COMMIT"
+            echo "##wfe[output checkout_ok=true]"
+            echo "##wfe[output commit=$COMMIT]"
+
+  # === lint: fmt + clippy ===
+
+  - id: lint
+    name: Lint
+    version: 1
+    outputs:
+      fmt_ok: bool
+      clippy_ok: bool
+    steps:
+      - name: fmt-check
+        type: kubernetes
+        outputs:
+          - name: fmt_ok
+        config:
+          <<: *ci_config
+          run: |
+            set -euo pipefail
+            cd /workspace/estafeta
+            cargo fmt --all -- --check
+            echo "##wfe[output fmt_ok=true]"
+
+      - name: clippy
+        type: kubernetes
+        outputs:
+          - name: clippy_ok
+        config:
+          <<: *ci_long_config
+          run: |
+            set -euo pipefail
+            cd /workspace/estafeta
+            cargo clippy --workspace --all-targets -- -D warnings
+            echo "##wfe[output clippy_ok=true]"
+
+  # === test-unit: lib tests only (integration tests need testcontainers) ===
+
+  - id: test-unit
+    name: Unit Tests
+    version: 1
+    outputs:
+      proto_ok: bool
+      server_ok: bool
+      migrations_ok: bool
+    steps:
+      - name: proto-tests
+        type: kubernetes
+        outputs:
+          - name: proto_ok
+        config:
+          <<: *ci_long_config
+          run: |
+            set -euo pipefail
+            cd /workspace/estafeta
+            cargo nextest run -p estafeta-proto --lib
+            echo "##wfe[output proto_ok=true]"
+
+      - name: server-tests
+        type: kubernetes
+        outputs:
+          - name: server_ok
+        config:
+          <<: *ci_long_config
+          run: |
+            set -euo pipefail
+            cd /workspace/estafeta
+            cargo nextest run -p estafeta-server --lib
+            echo "##wfe[output server_ok=true]"
+
+      - name: migrations-tests
+        type: kubernetes
+        outputs:
+          - name: migrations_ok
+        config:
+          <<: *ci_config
+          run: |
+            set -euo pipefail
+            cd /workspace/estafeta
+            cargo nextest run -p estafeta-migrations --lib
+            echo "##wfe[output migrations_ok=true]"
+
+  # === tag ===
+
+  - id: tag
+    name: Tag Release
+    version: 1
+    outputs:
+      version: string
+      tag_created: bool
+      tag_already_existed: bool
+    steps:
+      - name: read-version
+        type: kubernetes
+        outputs:
+          - name: version
+        config:
+          <<: *ci_config
+          run: |
+            set -euo pipefail
+            cd /workspace/estafeta
+            VERSION=$(grep -m1 '^version' crates/estafeta-proto/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+            echo "Version: $VERSION"
+            echo "##wfe[output version=$VERSION]"
+
+      - name: check-tag-exists
+        type: kubernetes
+        outputs:
+          - name: tag_already_existed
+        config:
+          <<: *ci_config
+          run: |
+            set -euo pipefail
+            cd /workspace/estafeta
+            git fetch --tags
+            TAG="v${VERSION}"
+            if git tag -l "$TAG" | grep -q "$TAG"; then
+              echo "##wfe[output tag_already_existed=true]"
+            else
+              echo "##wfe[output tag_already_existed=false]"
+            fi
+
+      - name: create-tag
+        type: kubernetes
+        when:
+          field: .outputs.tag_already_existed
+          equals: false
+        outputs:
+          - name: tag_created
+        config:
+          <<: *ci_config
+          run: |
+            set -euo pipefail
+            cd /workspace/estafeta
+            TAG="v${VERSION}"
+            git config user.email "wfe-ci@sunbeam.pt"
+            git config user.name "wfe-ci"
+            git tag -a "$TAG" -m "$TAG"
+            git push origin "$TAG"
+            echo "##wfe[output tag_created=true]"
+
+  # === publish: proto + migrations (server is shipped as an image) ===
+
+  - id: publish
+    name: Publish
+    version: 1
+    outputs:
+      all_published: bool
+    steps:
+      - name: publish-proto
+        type: kubernetes
+        config:
+          <<: *ci_long_config
+          run: |
+            set -euo pipefail
+            cd /workspace/estafeta
+            cargo publish -p estafeta-proto --registry sunbeam 2>&1 || echo "Already published: estafeta-proto"
+        error_behavior:
+          type: retry
+          interval: 10s
+          max_retries: 2
+
+      - name: publish-migrations
+        type: kubernetes
+        outputs:
+          - name: all_published
+        config:
+          <<: *ci_long_config
+          run: |
+            set -euo pipefail
+            cd /workspace/estafeta
+            sleep 10
+            cargo publish -p estafeta-migrations --registry sunbeam 2>&1 || echo "Already published: estafeta-migrations"
+            echo "##wfe[output all_published=true]"
+        error_behavior:
+          type: retry
+          interval: 10s
+          max_retries: 2
+
+  # === image: build estafeta-server container via in-cluster buildkitd ===
+
+  - id: image
+    name: Build Image
+    version: 1
+    inputs:
+      version: string
+    outputs:
+      image_pushed: bool
+      image_digest: string
+    steps:
+      - name: write-buildkit-certs
+        type: kubernetes
+        config:
+          <<: *ci_config
+          run: |
+            set -euo pipefail
+            mkdir -p /workspace/buildkit-certs
+            echo "$BUILDKIT_CA_CERT"     > /workspace/buildkit-certs/ca.pem
+            echo "$BUILDKIT_CLIENT_CERT" > /workspace/buildkit-certs/client.pem
+            echo "$BUILDKIT_CLIENT_KEY"  > /workspace/buildkit-certs/client-key.pem
+            chmod 600 /workspace/buildkit-certs/client-key.pem
+
+      - name: build-and-push
+        type: buildkit
+        outputs:
+          - name: image_pushed
+          - name: image_digest
+        config:
+          dockerfile: /workspace/estafeta/Dockerfile
+          context: /workspace/estafeta
+          tags:
+            - "src.sunbeam.pt/studio/estafeta:${VERSION}"
+            - "src.sunbeam.pt/studio/estafeta:latest"
+          push: true
+          buildkit_addr: tcp://buildkitd.build.svc:1234
+          tls:
+            ca:   /workspace/buildkit-certs/ca.pem
+            cert: /workspace/buildkit-certs/client.pem
+            key:  /workspace/buildkit-certs/client-key.pem
+          timeout: 30m
+
+  # === release: create Gitea release ===
+
+  - id: release
+    name: Gitea Release
+    version: 1
+    inputs:
+      version: string
+    outputs:
+      release_created: bool
+      release_url: string
+    steps:
+      - name: create-gitea-release
+        type: kubernetes
+        outputs:
+          - name: release_created
+          - name: release_url
+        config:
+          <<: *ci_config
+          run: |
+            set -euo pipefail
+            TAG="v${VERSION}"
+            tea login add --name sunbeam --url https://src.sunbeam.pt --token "$TEA_TOKEN" 2>/dev/null || true
+            if tea release create \
+              --repo studio/estafeta \
+              --tag "$TAG" \
+              --title "$TAG" \
+              --note "Container: \`src.sunbeam.pt/studio/estafeta:${VERSION}\`\nCrates: \`estafeta-proto\`, \`estafeta-migrations\` ${VERSION}" 2>&1; then
+              echo "##wfe[output release_created=true]"
+            else
+              echo "##wfe[output release_created=false]"
+            fi
+            echo "##wfe[output release_url=https://src.sunbeam.pt/studio/estafeta/releases/tag/${TAG}]"
+
+  # === ci: top-level orchestrator ===
+
+  - id: ci
+    name: Continuous Integration
+    version: 1
+    inputs:
+      repo_url: string
+      commit_sha: string
+      branch: string?
+    outputs:
+      version: string
+      all_published: bool
+      image_pushed: bool
+      released: bool
+
+    steps:
+      - name: run-checkout
+        type: workflow
+        outputs:
+          - name: commit
+        config:
+          workflow: checkout
+          version: 1
+
+      - name: run-lint
+        type: workflow
+        outputs:
+          - name: fmt_ok
+          - name: clippy_ok
+        config:
+          workflow: lint
+          version: 1
+
+      - name: run-tests
+        type: workflow
+        outputs:
+          - name: proto_ok
+          - name: server_ok
+          - name: migrations_ok
+        config:
+          workflow: test-unit
+          version: 1
+
+      - name: run-tag
+        type: workflow
+        when:
+          field: .inputs.branch
+          equals: mainline
+        outputs:
+          - name: version
+          - name: tag_created
+        config:
+          workflow: tag
+          version: 1
+
+      - name: run-publish
+        type: workflow
+        when:
+          field: .outputs.tag_created
+          equals: true
+        outputs:
+          - name: all_published
+        config:
+          workflow: publish
+          version: 1
+
+      - name: run-image
+        type: workflow
+        when:
+          field: .outputs.tag_created
+          equals: true
+        outputs:
+          - name: image_pushed
+          - name: image_digest
+        config:
+          workflow: image
+          version: 1
+
+      - name: run-release
+        type: workflow
+        when:
+          field: .outputs.tag_created
+          equals: true
+        outputs:
+          - name: released
+          - name: release_url
+        config:
+          workflow: release
+          version: 1
