@@ -16,7 +16,7 @@ name = "estafeta"
 path = "src/main.rs"
 
 [dependencies]
-estafeta-proto = { path = "../estafeta-proto", version = "0.1.0", registry = "sunbeam" }
+estafeta-proto = { path = "../estafeta-proto" }
 
 # gRPC
 tonic.workspace = true
