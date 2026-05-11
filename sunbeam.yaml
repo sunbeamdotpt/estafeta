@@ -16,6 +16,8 @@ targets:
     exec: "cargo clean"
   doc:
     exec: "cargo doc --workspace --no-deps"
+  package:
+    exec: "docker buildx build --push -t src.${SUNBEAM_REGISTRY}/studio/estafeta:latest ."
 deps:
   services:
     - postgres
