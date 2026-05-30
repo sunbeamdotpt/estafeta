@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/estafeta-proto",
+    "crates/estafeta-server",
+    "crates/estafeta-migrations",
+]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/sunbeamdotpt/estafeta"
+
+[workspace.dependencies]
+# gRPC / Protobuf
+tonic = "0.14"
+tonic-build = "0.14"
+tonic-prost-build = "0.14"
+tonic-prost = "0.14"
+prost = "0.14"
+prost-types = "0.14"
+
+# Async runtime
+tokio = { version = "1.49", features = ["full"] }
+
+# NATS
+async-nats = "0.46"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# JSON Schema validation
+jsonschema = "0.38"
+
+# JWT
+jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
+
+# HTTP client (for Keto, JWKS, delivery adapters)
+reqwest = { version = "0.13", features = ["json", "rustls"] }
+
+# Caching
+moka = { version = "0.12", features = ["future"] }
+
+# Configuration
+figment = { version = "0.10", features = ["env", "toml"] }
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
