@@ -1,3 +1,9 @@
+---
+title: "Estafeta Architecture"
+description: "System design and data flow of the unified notification inbox service built in Rust."
+updated_at: "2026-07-28"
+---
+
 # Estafeta Architecture
 
 ## System Overview

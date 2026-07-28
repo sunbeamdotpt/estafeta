@@ -1,3 +1,9 @@
+---
+title: "Configuration Reference"
+description: "All configuration is provided through environment variables prefixed with ESTAFETA_, loaded at startup via Figment."
+updated_at: "2026-07-28"
+---
+
 # Configuration Reference
 
 All configuration is provided through environment variables prefixed with

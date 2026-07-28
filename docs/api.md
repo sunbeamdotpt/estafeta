@@ -1,3 +1,9 @@
+---
+title: "Estafeta gRPC API Reference"
+description: "Reference for the five gRPC services exposed under the estafeta.v1 package, including authentication and authorization."
+updated_at: "2026-07-28"
+---
+
 # Estafeta gRPC API Reference
 
 Estafeta exposes five gRPC services under the `estafeta.v1` package. All

@@ -1,3 +1,9 @@
+---
+title: "Deployment Guide"
+description: "Building, running, and operating Estafeta in production."
+updated_at: "2026-07-28"
+---
+
 # Deployment Guide
 
 This document covers building, running, and operating Estafeta in production.

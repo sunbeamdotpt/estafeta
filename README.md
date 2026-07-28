@@ -1,5 +1,8 @@
 # Estafeta
 
+[![Matrix](https://img.shields.io/badge/chat-%23hello%3Asunbeam.pt-0dbd8b?logo=matrix)](https://matrix.to/#/#hello:sunbeam.pt)
+[![License](https://img.shields.io/github/license/sunbeamdotpt/estafeta)](LICENSE)
+
 > *Tem uma carta para si.*
 
 A unified notification inbox for your entire platform. Estafeta consolidates

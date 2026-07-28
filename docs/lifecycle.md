@@ -1,3 +1,9 @@
+---
+title: "Notification Lifecycle"
+description: "The six-state notification state machine, its transitions, and how it is enforced in Rust and at the database level."
+updated_at: "2026-07-28"
+---
+
 # Notification Lifecycle
 
 ## State Machine
