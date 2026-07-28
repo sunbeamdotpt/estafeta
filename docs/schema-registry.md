@@ -1,3 +1,9 @@
+---
+title: "Schema Registry"
+description: "A centralized catalog of notification types and severity levels that producer services can send through Estafeta."
+updated_at: "2026-07-28"
+---
+
 # Schema Registry
 
 ## What the Schema Registry Is
